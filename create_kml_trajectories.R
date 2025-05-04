@@ -16,7 +16,9 @@ ids$icon <- 'orange_dot.png'
 ids$icon[which(ids$code=='OPL26')] <- 'blue_dot.png'
 ids$icon[which(ids$code=='OPL29')] <- 'red_dot.png'
 
-cols <- rep('white',n_inds)
+cols <- rep('ff377ef7',n_inds)
+cols[which(ids$code=='OPL26')] <- 'ffed8031'
+cols[which(ids$code=='OPL29')] <- 'ff0000ff'
 
 #get dates
 dates <- unique(date(timestamps))
