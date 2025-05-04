@@ -9,6 +9,7 @@ datadir <- '~/Dropbox/lions_at_night/data_namibia/rawdata/'
 outdir <- '~/Dropbox/lions_at_night/data_namibia/processed/'
 level0_outfile <- paste0(outdir, 'lion_omukutu_latlon_xy_level0.RData')
 level1_outfile <- paste0(outdir, 'lion_omukutu_xy_level1.RData')
+level1_outfile_latlon <- paste0(outdir, 'lion_omukutu_latlon_level1.RData')
 
 #Read in data
 alldat <- data.frame()
@@ -52,3 +53,15 @@ out <- preprocess_gps_level0_to_level1(input_file_path = level0_outfile,
                                 remove_unrealistic_locations = T, 
                                 interpolate_small_gaps = T, 
                                 interpolate_stationary_periods = T)
+
+#also get lat/lon data at level 1
+#get lon/lat data (level 1)
+print('converting back to lat/lon to save latlon level 1 file')
+lons <- lats <- matrix(nrow = nrow(xs), ncol = ncol(out$xs))
+for(i in 1:nrow(xs)){
+  lonsLats <- cocomo::utm_to_latlon(cbind(out$xs[i,],out$ys[i,]),utm_zone = 33, hemisphere = 'south')
+  lons[i,] <- lonsLats[,1]
+  lats[i,] <- lonsLats[,2]
+}
+
+save(file = level1_outfile_latlon, list = c('lats','lons','timestamps','ids'))
