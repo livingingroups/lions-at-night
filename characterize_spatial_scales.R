@@ -1,6 +1,7 @@
 #What are the relevant spatial scales associated with lion groups?
 
 library(cocomo)
+library(lubridate)
 
 #PARAMETERS - MODIFY THESE
 
@@ -23,7 +24,11 @@ Sys.setenv(TZ='UTC')
 #FUNCTIONS
 
 #helper function to get statistics of the distribution of values
-get_distrib_statistics <- function(vals, bins){
+#vals = values for which you are getting the distribution of (e.g. heading correlation)
+#x = what you are binning on (e.g. dyadic distance)
+#bins = bins to use for binning x
+#the dimensions of vals and x must be the same
+get_distrib_statistics <- function(vals, x, bins){
   out <- list()
   out$bins <- bins
   out$mean <- out$median <- out$q75 <- out$q25 <- out$q025 <- out$q975 <- rep(NA, length(bins)-1)
@@ -31,7 +36,7 @@ get_distrib_statistics <- function(vals, bins){
   for(i in 1:(length(bins)-1)){
     
     #get indexes to data in that bin
-    idxs <- which(dyad_dists >= dist_bins[i] & dyad_dists < dist_bins[i+1])
+    idxs <- which(x >= bins[i] & x < bins[i+1])
     
     #get relevant stats
     out$mean[i] <- mean(vals[idxs], na.rm=T)
@@ -46,20 +51,31 @@ get_distrib_statistics <- function(vals, bins){
 }
 
 #helper function to make plot
-make_plot <- function(dat, plotpath, ylab, ylim = NULL, abline_y = NULL){
+make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (m)', abline_y = NULL, logx = T, plot_means = T, plot_medians = T, plot_IQR = T){
   if(is.null(ylim)){
     ylim <- c(min(dat$q25,na.rm=T), max(dat$q75, na.rm=T))
   }
   
   png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
   mids <- (dat$bins[2:length(dat$bins)] + dat$bins[1:(length(dat$bins)-1)]) / 2
-  plot(mids, dat$mean, xlab = 'Distance apart (m)', ylab = ylab, pch = 19, col = '#00000066', cex = 1.5, ylim = ylim ,log='x')
+  if(logx){
+    plot(mids, dat$mean, xlab = xlab, ylab = ylab, pch = 19, col = '#00000000', cex = 1.5, ylim = ylim ,log='x')
+  } else{
+    plot(mids, dat$mean, xlab = xlab, ylab = ylab, pch = 19, col = '#00000000', cex = 1.5, ylim = ylim)
+    
+  }
   if(!is.null(abline_y)){
     abline(h=abline_y, lty = 2)
   }
-  arrows(mids, dat$q25, mids, dat$q75, lwd = 2, code = 3, length = 0.1, angle = 90)
-  points(mids, dat$median, pch = 19, col = 'black',cex = 1.5)
-  points(mids, dat$mean, pch = 19, col = 'gray', cex = 1.5)
+  if(plot_IQR){
+    arrows(mids, dat$q25, mids, dat$q75, lwd = 2, code = 3, length = 0.1, angle = 90)
+  }
+  if(plot_medians){
+    points(mids, dat$median, pch = 19, col = 'black',cex = 1.5)
+  }
+  if(plot_means){
+    points(mids, dat$mean, pch = 19, col = 'gray', cex = 1.5)
+  }
   dev.off()
 }
 
@@ -100,6 +116,13 @@ for(i in 1:n_inds){
 #dyadic distances
 dyad_dists <- cocomo::get_group_dyadic_distances(xs, ys)
 
+#group polarization
+polarization <- cocomo::get_group_polarization(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
+
+#group speed
+out <- cocomo::get_group_heading_and_speed(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
+group_speed <- out$speeds
+
 #dyadic distance changes, speed differences, and heading correlations between individuals
 dyad_dist_changes <- head_corrs <- speed_corrs <- speed_diffs <- log_speed_diffs <- array(NA, dim = c(n_inds,n_inds,n_times))
 for(i in 1:(n_inds-1)){
@@ -113,29 +136,37 @@ for(i in 1:(n_inds-1)){
   }
 }
 
-#set non-relevant indexes to NA
-dyad_dists[,,idxs_to_remove] <- NA
-head_corrs[,,idxs_to_remove] <- NA
-speed_diffs[,,idxs_to_remove] <- NA
-log_speed_diffs[,,idxs_to_remove] <- NA
-dyad_dist_changes[,,idxs_to_remove] <- NA
+#get night data only (set non-night indexes to NA)
+dyad_dists_night <- dyad_dists
+head_corrs_night <- head_corrs
+speed_diffs_night <- speed_diffs
+log_speed_diffs_night <- log_speed_diffs
+dyad_dist_changes_night <- dyad_dist_changes
+
+dyad_dists_night[,,idxs_to_remove] <- NA
+head_corrs_night[,,idxs_to_remove] <- NA
+speed_diffs_night[,,idxs_to_remove] <- NA
+log_speed_diffs_night[,,idxs_to_remove] <- NA
+dyad_dist_changes_night[,,idxs_to_remove] <- NA
 
 #calculate mean, median, iqr of metrics during relevant periods only, as a function of distance apart
 metrics <- list()
 metrics$dist_bins <- dist_bins
 
 #get statistics of the distribution for each metric within each bin
-metrics$head_corr <- get_distrib_statistics(head_corrs, dist_bins)
-metrics$speed_diff <- get_distrib_statistics(speed_diffs, dist_bins)
-metrics$log_speed_diff <- get_distrib_statistics(log_speed_diffs, dist_bins)
-metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes, dist_bins)
-metrics$approach <- get_distrib_statistics(dyad_dist_changes[which(dyad_dist_changes!=0)] < 0, dist_bins)
-metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs)*180/pi, dist_bins)
+metrics$head_corr <- get_distrib_statistics(head_corrs_night, dyad_dists, dist_bins)
+metrics$speed_diff <- get_distrib_statistics(speed_diffs_night, dyad_dists, dist_bins)
+metrics$log_speed_diff <- get_distrib_statistics(log_speed_diffs_night, dyad_dists, dist_bins)
+metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night, dyad_dists, dist_bins)
+metrics$approach <- get_distrib_statistics(dyad_dist_changes_night[which(dyad_dist_changes!=0)] < 0, dyad_dists, dist_bins)
+metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night)*180/pi, dyad_dists, dist_bins)
 
-#PLOTS
+#-----PLOTS-----
+
+#----METRICS VS DISTANCE BETWEEN DYADS----
 
 #Plot 1: Distribution of log(dyadic distances) between individuals
-png(filename = paste0(dir, 'plots/spatial_scales/hist_log_dyad_dist.png'), width = 8, height = 6, units = 'in', res = 300)
+png(filename = paste0(dir, 'plots/overall_hists/hist_log_dyad_dist.png'), width = 8, height = 6, units = 'in', res = 300)
 histo <- hist(log(dyad_dists, 10), plot=T, breaks=80, xlab = 'Dyadic distance (m) - log bins',main='', xlim = c(0,4), freq = F, xaxt ='n')
 axis(1, at = seq(0,4,1), labels = 10^seq(0,4,1))
 dev.off()
@@ -172,6 +203,99 @@ make_plot(dat, plotpath, ylab, abline_y = 0)
 #dat <- metrics$approach
 #make_plot(dat, plotpath, ylab, ylim = c(0.4,0.6),abline_y = 0.5)
 
+#----BASIC INFO DURING THE NIGHT----
+mean_dyad_dist <- apply(dyad_dists, 3, FUN = mean, na.rm=T)
+hour_of_day <- lubridate::hour(timestamps)
+
+
+
+
+# hour_of_day_array <- array(NA, dim = dim(head_corrs))
+# for(i in 1:n_inds){
+#   for(j in 1:n_inds){
+#     hour_of_day_array[i,j,] <- hour_of_day
+#   }
+# }
+
+#Get metrics by hour
+metrics_by_hour <- list()
+metrics_by_hour$mean_dyad_dist <- get_distrib_statistics(mean_dyad_dist, hour_of_day, seq(-.5,24,1))
+metrics_by_hour$polarization <- get_distrib_statistics(polarization, hour_of_day, seq(-.5,24,1))
+
+#Plot: Mean dyadic distance by hour
+plotpath <- paste0(dir, 'plots/hourly_metrics/mean_dyad_dist_by_hr.png')
+dat <- metrics_by_hour$mean_dyad_dist
+make_plot(dat, plotpath, ylab = 'Mean dyadic distance (m)', logx=F, xlab = 'Hour UTC', plot_means = F)
+
+#Plot: Polarization by hour
+plotpath <- paste0(dir, 'plots/hourly_metrics/pol_by_hr.png')
+dat <- metrics_by_hour$polarization
+make_plot(dat, plotpath, ylab = 'Group polarization', logx=F, xlab = 'Hour UTC', plot_means = F, ylim =c(0,1))
+
+#Plot: histogram of group polarization
+png(filename = paste0(dir, 'plots/overall_hists/hist_polarization.png'), width = 8, height = 6, units = 'in', res = 300)
+histo <- hist(polarization, plot=T, breaks=seq(0,1,.01), xlab = 'Group polarization',main='', xlim = c(0,1), freq = F)
+dev.off()
+
+#Plot: cumulative histogram of group speed and individual speed
+png(filename = paste0(dir, 'plots/overall_hists/hist_speed.png'), width = 8, height = 6, units = 'in', res = 300)
+speedx <- seq(0,max(group_speed,na.rm=T)+1,.01)
+histo <- hist(group_speed, breaks = speedx, plot = F)
+cumhist <- cumsum(histo$counts) / sum(histo$counts)
+plot(histo$mids, cumhist,log='x', xlim=c(.1,10), type = 'l', lwd = 3, xlab = 'Speed (m/s)', ylab = 'Cumulative probability', ylim=c(0.01,1))
+speedx <- seq(0,max(speeds,na.rm=T)+1,.01)
+histo <- hist(speeds, breaks = speedx, plot = F)
+cumhist <- cumsum(histo$counts) / sum(histo$counts)
+lines(histo$mids, cumhist, col = 'red', lwd = 3)
+abline(v=1.3, lty = 2)
+text(1.1, 0.5, 'Person walking', srt = 90)
+abline(v=5, lty = 2)
+text(4.3, .5, 'Person running', srt = 90)
+legend('bottomleft', legend = c('Individual','Group centroid'), col = c('red','black'),lwd=c(3,3))
+dev.off()
+
+#Speed distribution as a function of time of day (individual)
+png(filename = paste0(dir, 'plots/hourly_metrics/speed_distrib_by_hr.png'), width = 8, height = 6, units = 'in', res = 300)
+speedx <- seq(0,max(speeds,na.rm=T)+1,.001)
+plot(NULL, xlim = c(.1,10), ylim = c(0,1), log = 'x', xlab = 'Individual speed (m/s)', ylab = 'Cumulative probability')
+hour_bins <- seq(0,24,2)
+cols <- viridis(length(hour_bins)-1)
+for(hour in 1:(length(hour_bins)-1)){
+  idxs <- which(hour_of_day >= hour_bins[hour] & hour_of_day < hour_bins[hour+1])
+  histo <- hist(speeds[,idxs], breaks = speedx, plot = F)
+  cumhist <- cumsum(histo$counts) / sum(histo$counts)
+  lines(histo$mids, cumhist, col = cols[hour], lwd = 2)
+}
+labs <- paste0(hour_bins[1:(length(hour_bins)-1)],'-', hour_bins[2:length(hour_bins)],' UTC')
+legend('bottomright', legend = labs, col = cols, lwd = 2)
+dev.off()
+
+#Speed distribution as a function of time of day (group)
+png(filename = paste0(dir, 'plots/hourly_metrics/centr_speed_distrib_by_hr.png'), width = 8, height = 6, units = 'in', res = 300)
+speedx <- seq(0,max(speeds,na.rm=T)+1,.001)
+plot(NULL, xlim = c(.1,10), ylim = c(0,1), log = 'x', xlab = 'Centroid speed (m/s)', ylab = 'Cumulative probability')
+hour_bins <- seq(0,24,2)
+cols <- viridis(length(hour_bins)-1)
+for(hour in 1:(length(hour_bins)-1)){
+  idxs <- which(hour_of_day >= hour_bins[hour] & hour_of_day < hour_bins[hour+1])
+  histo <- hist(group_speed[idxs], breaks = speedx, plot = F)
+  cumhist <- cumsum(histo$counts) / sum(histo$counts)
+  lines(histo$mids, cumhist, col = cols[hour], lwd = 2)
+}
+labs <- paste0(hour_bins[1:(length(hour_bins)-1)],'-', hour_bins[2:length(hour_bins)],' UTC')
+legend('bottomright', legend = labs, col = cols, lwd = 2)
+dev.off()
+
+
+#Plot: histogram of group polarization - only for group speeds > 0.5 m/s
+#group_speed_bins <- seq(0,.5,1,2,3)
+#png(filename = paste0(dir, 'plots/overall_hists/hist_polarization.png'), width = 8, height = 6, units = 'in', res = 300)
+#histo <- hist(polarization[which(group_speed > 3)], plot=T, breaks=seq(0,1,.01), xlab = 'Group polarization',main='', xlim = c(0,1), freq = F)
+#dev.off()
+
 #TODO:
 #look into autocorrelation, consider downsampling 
 #model with autocorrelation model to get error bars 
+#nearest neighbor
+#different time scales - 5 sec, 10 sec, 30, sec, 1 min ,5, 10
+#remove dyad dist changes if both below a speed threshold
