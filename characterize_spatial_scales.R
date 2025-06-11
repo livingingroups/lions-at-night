@@ -14,12 +14,12 @@ library(lubridate)
 
 #directories
 dir <- '~/Dropbox/lions_at_night/' #path to project directory
-R <- 10 #radius (in meters) for spatial headings
-speed_dt <- 10 #time difference to use for computing speeds and headings (in units of timesteps)
+speed_dt <- 30 #time difference to use for computing speeds and headings (in units of timesteps)
 min_speed_to_compute_heading <- .5 #minimum speed needed to have a heading (otherwise headings are set to NA)
 start_times <- as.POSIXct(paste(seq.Date(date('2023-05-06'),date('2023-06-15'),by=1), '16:00:00'), tz = 'UTC') #timestamps of times to start each analysis period for spatial scales analyses
 end_times <- as.POSIXct(paste(seq.Date(date('2023-05-07'),date('2023-06-16'),by=1), '06:00:00'), tz = 'UTC') #timestamps of times to end each analysis period for spatial scales analyses
 dist_bins <- c(0, 10^seq(0.6,4,.4)) #distance between dyads bins to use for spatial scales analyses
+fit_gams <- F
 
 #------------------------------------------------
 #LIBRARY
@@ -35,7 +35,7 @@ Sys.setenv(TZ='UTC')
 #x = what you are binning on (e.g. dyadic distance)
 #bins = bins to use for binning x
 #the dimensions of vals and x must be the same
-get_distrib_statistics <- function(vals, x, bins){
+get_distrib_statistics <- function(vals, x, bins, fit_gam = F, gam_family = 'gaussian', gam_k = 5){
   out <- list()
   out$bins <- bins
   out$mean <- out$median <- out$q75 <- out$q25 <- out$q025 <- out$q975 <- rep(NA, length(bins)-1)
@@ -52,6 +52,11 @@ get_distrib_statistics <- function(vals, x, bins){
     out$q25[i] <- quantile(vals[idxs], 0.25, na.rm=T)
     out$q025[i] <- quantile(vals[idxs], 0.025, na.rm=T)
     out$q975[i] <- quantile(vals[idxs], 0.975, na.rm=T)
+  }
+  
+  if(fit_gam){
+    mod <- gam(formula = val ~ s(x, 3), family = gam_family, data = data.frame(val = c(vals), x = c(x)))
+    out$gam <- mod
   }
   
   return(out)
@@ -74,6 +79,13 @@ make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (
   if(!is.null(abline_y)){
     abline(h=abline_y, lty = 2)
   }
+  
+  if(!is.null(dat$gam)){
+    newdat <- data.frame(x = seq(min(dat$bins),max(dat$bins), length.out=10000))
+    preds <- predict(dat$gam, newdata = newdat, type = 'response')
+    lines(newdat$x, preds, lwd = 3)
+  }
+  
   if(plot_IQR){
     arrows(mids, dat$q25, mids, dat$q75, lwd = 2, code = 3, length = 0.1, angle = 90)
   }
@@ -163,6 +175,18 @@ speed_diffs_night[,,idxs_to_remove] <- NA
 log_speed_diffs_night[,,idxs_to_remove] <- NA
 dyad_dist_changes_night[,,idxs_to_remove] <- NA
 
+#remove data when neither individual is moving from dyadic distance changes
+dyad_dist_changes_when_moving_night <- dyad_dist_changes_night
+for(i in 1:(n_inds-1)){
+  for(j in 2:n_inds){
+    slow_i <- speeds[i,] < min_speed_to_compute_heading
+    slow_j <- speeds[j,] < min_speed_to_compute_heading
+    idxs_slow_both <- which(slow_i & slow_j)
+    dyad_dist_changes_when_moving_night[i,j,idxs_slow_both] <- NA
+    dyad_dist_changes_when_moving_night[j,i,idxs_slow_both] <- NA
+  }
+}
+
 #calculate mean, median, iqr of metrics during relevant periods only, as a function of distance apart
 metrics <- list()
 metrics$dist_bins <- dist_bins
@@ -172,7 +196,9 @@ metrics$head_corr <- get_distrib_statistics(head_corrs_night, dyad_dists, dist_b
 metrics$speed_diff <- get_distrib_statistics(speed_diffs_night, dyad_dists, dist_bins)
 metrics$log_speed_diff <- get_distrib_statistics(log_speed_diffs_night, dyad_dists, dist_bins)
 metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night, dyad_dists, dist_bins)
+metrics$dyad_dist_change_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night, dyad_dists, dist_bins)
 metrics$approach <- get_distrib_statistics(dyad_dist_changes_night[which(dyad_dist_changes!=0)] < 0, dyad_dists, dist_bins)
+metrics$approach_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night < 0, dyad_dists, dist_bins)
 metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night)*180/pi, dyad_dists, dist_bins)
 
 #-----PLOTS-----
@@ -205,11 +231,18 @@ ylab = 'Change in dyadic distance (m)'
 dat <- metrics$dyad_dist_change
 make_plot(dat, plotpath, ylab, abline_y = 0)
 
-#Plot: Probability of approaching - needs a different approach to error bars etc
-#plotpath <- paste0(dir, 'plots/spatial_scales/p_approach.png')
-#ylab = 'Probability of approach'
-#dat <- metrics$approach
-#make_plot(dat, plotpath, ylab, ylim = c(0.4,0.6),abline_y = 0.5)
+#Plot: Change in dyadic distance, only when moving
+plotpath <- paste0(dir, 'plots/spatial_scales/dyad_dist_change_when_moving.png')
+ylab = 'Change in dyadic distance (m)'
+dat <- metrics$dyad_dist_change_when_moving
+make_plot(dat, plotpath, ylab, abline_y = 0)
+
+
+#Plot: Probability of approaching (when moving)
+plotpath <- paste0(dir, 'plots/spatial_scales/p_approach_when_moving.png')
+ylab = 'Probability of approach'
+dat <- metrics$approach_when_moving
+make_plot(dat, plotpath, ylab, ylim = c(0,0.6),abline_y = 0.5, plot_medians = F, plot_IQR = F)
 
 #----Part 2: Basic info during the night----
 
@@ -302,3 +335,11 @@ dev.off()
 #nearest neighbor
 #different time scales - 5 sec, 10 sec, 30, sec, 1 min ,5, 10
 #remove dyad dist changes if both below a speed threshold
+
+data <- data.frame(dist = c(dyad_dists), approach = c(dyad_dist_changes_when_moving_night < 0))
+data <- data[complete.cases(data),]
+data <- data[which(data$dist < 10000),]
+test <- gam(approach ~ s(dist,3), data = data, family = 'binomial')
+newx <- seq(1,5000)
+predicted <- predict(test, newdata = data.frame(dist = newx), type = 'response',se=T)
+plot(newx, predicted, type = 'l', lwd = 3, log = 'x')
