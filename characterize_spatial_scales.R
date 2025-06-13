@@ -20,6 +20,16 @@
 #is basically just plotting (though there are a few computations in there because I didn't manage to clean this up fully)
 #From the first part, the data frame approach_data is optionally saved (this is for the analyses in Analysis 4)
 
+#-------------LIBRARIES--------------
+library(cocomo)
+library(lubridate)
+library(fields)
+library(ggplot2)
+library(viridis)
+
+#set time zone to UTC to avoid confusing time zone issues
+Sys.setenv(TZ='UTC')
+
 #------------PARAMETERS-----------
 
 dir <- '~/Dropbox/lions_at_night/' #path to project directory
@@ -34,16 +44,6 @@ end_times <- as.POSIXct(paste(seq.Date(date('2023-05-07'),date('2023-06-16'),by=
 
 savename_df <- 'data_namibia/processed/cohesion_data.RData' #where to save the data frame 'approach_data' (from analysis 4) - if NULL, nothing will be saved
 make_plots <-  T #whether to generate plots or not
-
-#-------------LIBRARIES--------------
-library(cocomo)
-library(lubridate)
-library(fields)
-library(ggplot2)
-library(viridis)
-
-#set time zone to UTC to avoid confusing time zone issues
-Sys.setenv(TZ='UTC')
 
 #-------------FUNCTIONS----------------
 
