@@ -1,6 +1,7 @@
 #What is lion cohesion + coordination like during the night?
 #What are the relevant spatial scales associated with lion coordination?
-#This script so far has 3 parts:
+#How do individuals vary in their cohesive behavior?
+#This script so far runs 4 sets of analyses:
 #Part 1 looks at spatial scales of coordination by plotting various dyadic 
 #coordination-related metrics (e.g. heading correlation, change in dyadic distance, etc.)
 #as a function of distance between pairs, across all dyads.
@@ -8,8 +9,15 @@
 #and their relationship with time of day.
 #Part 3 looks at cohesion on a dyadic level (i.e. thinking about relationships between specific dyads,
 #so a kind of leader-follower type analysis).
-#This is defined based on the probability that one individual (the "follower") moves in the direction of another's
-#(the "leader") current location
+#This is defined based on the probability that one individual (the "ego") moves in the direction of another's
+#(the "other") current location. In some places in the script I call the "ego" the "follower" and the
+#"other" the "leader". I couldn't be bothered to fix it, sorry.
+#Part 4 is similar to Part 3, but we now also consider what the "other" is doing, i.e. whether 
+#it is currently stationary, moving toward the ego, or moving away from the ego.
+#There is more description of all these analyses in the lion project notebook
+
+#The script is organized such that the first part (LOAD AND PROCESS DATA) does the computations and the second part (PLOTS) 
+#is basically just plotting (though there are a few computations in there because I didn't manage to clean this up fully)
 
 library(cocomo)
 library(lubridate)
@@ -70,7 +78,7 @@ get_distrib_statistics <- function(vals, x, bins, fit_gam = F, gam_family = 'gau
   return(out)
 }
 
-#helper function to make plots of different metrics
+#helper function to make plots of different metrics vs distance
 make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (m)', abline_y = NULL, logx = T, plot_means = T, plot_medians = T, plot_IQR = T){
   if(is.null(ylim)){
     ylim <- c(min(dat$q25,na.rm=T), max(dat$q75, na.rm=T))
@@ -106,6 +114,55 @@ make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (
   dev.off()
 }
 
+#Plotting function for 'interactions' (i.e. following, converging, joining)
+#other_behav should be either NULL (use all data), 'toward', 'away', or 'stationary'
+make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other_behav = NULL, include_moving_only = F){
+  
+  #if indexes to subset by aren't specified, use all rows of data
+  if(is.null(other_behav)){
+    idxs_to_use <- 1:nrow(approach_data)
+  } else{
+    idxs_to_use <- which(approach_data$past_behav_j == other_behav)
+  }
+  
+  #get means by distance bin
+  if(include_moving_only){
+    toward <- get_distrib_statistics(vals = approach_data$i_approaches_j_given_moving[idxs_to_use], x = approach_data$dyad_dist[idxs_to_use], bins = dist_bins)
+  } else{
+    toward <- get_distrib_statistics(vals = approach_data$i_approaches_j[idxs_to_use], x = approach_data$dyad_dist[idxs_to_use], bins = dist_bins)
+  }
+  
+  #get midpoints of bins
+  mids <- dist_bins[1:(length(dist_bins)-1)] + diff(dist_bins)/2
+  
+  #main label
+  if(is.null(other_behav)){
+    main_lab <- 'All data'
+  } else{
+    if(other_behav == 'toward'){
+      main_lab <- 'Converging'
+    }
+    if(other_behav == 'away'){
+      main_lab = 'Following'
+    }
+    if(other_behav == 'stationary'){
+      main_lab = 'Joining'
+    }
+  }
+  
+  #make plot
+  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
+  if(include_moving_only){
+    plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach (given moved)', main = main_lab)
+    abline(h=0.5, lty = 2)
+  } else{
+    plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach', main = main_lab)
+  }
+  dev.off()
+  
+}
+
+
 #----LOAD AND PROCESS DATA----
 
 #Load data
@@ -117,6 +174,7 @@ n_inds <- nrow(xs)
 n_times <- ncol(xs)
 
 #Get periods of data to use for spatial scales analyses
+#To Do: replace with stop/start periods defined by Gen's analysis
 periods <- data.frame(start_time = start_times, end_time = end_times)
 periods$t0_idx <- match(periods$start_time, timestamps)
 periods$tf_idx <- match(periods$end_time, timestamps)
@@ -131,10 +189,10 @@ idxs_to_remove <- setdiff(1:n_times, relevant_t_idxs)
 
 #COMPUTE METRICS
 
-#headings and speeds
+#headings and speeds (future)
 heads <- speeds <- matrix(NA, nrow = n_inds, ncol = n_times)
 for(i in 1:n_inds){
-  out <- cocomo::get_heading_and_speed_temporal(xs[i, ], ys[i,], t_window = speed_dt, forward = T)
+  out <- cocomo::get_heading_and_speed_temporal(x_i = xs[i, ], y_i = ys[i,], t_window = speed_dt, forward = T)
   heads[i,] <- out$heads
   speeds[i,] <- out$speeds
   
@@ -142,17 +200,29 @@ for(i in 1:n_inds){
   heads[i,which(speeds[i,] < min_speed_to_compute_heading)] <- NA
 }
 
+#past headings and speeds
+heads_past <- matrix(NA, nrow = n_inds, ncol = n_times)
+speeds_past <- matrix(NA, nrow = n_inds, ncol = n_times)
+for(i in 1:n_inds){
+  out <- cocomo::get_heading_and_speed_temporal(x_i = xs[i,], y_i = ys[i,], t_window = speed_dt, forward = F)
+  heads_past[i,] <- out$heads
+  speeds_past[i,] <- out$speeds
+  
+  #remove heading when speed is too low
+  heads_past[i,which(speeds_past[i,] < min_speed_to_compute_heading)] <- NA
+}
+
 #dyadic distances
 dyad_dists <- cocomo::get_group_dyadic_distances(xs, ys)
 
-#group polarization (computed for all instances where at least 5 individuals were tracked)
+#group polarization (computed for all instances where at least 5 individuals were tracked, otherwise NA)
 polarization <- cocomo::get_group_polarization(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
 
-#group speed (computed for all instances where at least 5 individuals were tracked)
+#group speed (computed for all instances where at least 5 individuals were tracked, otherwise NA)
 out <- cocomo::get_group_heading_and_speed(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
 group_speed <- out$speeds
 
-#get mean dyadic distance (computed for all instances where at least 5 individuals were tracked)
+#get mean dyadic distance (computed for all instances where at least 5 individuals were tracked, otherwise NA)
 mean_dyad_dist <- apply(dyad_dists, 3, FUN = mean, na.rm=T)
 n_tracked <- colSums(!is.na(xs))
 mean_dyad_dist[which(n_tracked < n_inds - 1)] <- NA
@@ -170,7 +240,7 @@ for(i in 1:(n_inds-1)){
   }
 }
 
-#heading toward (or away from) conspecifics' previous locations
+#heading relative to others' previous locations
 head_twd <- array(NA, dim = c(n_inds, n_inds, n_times))
 for(i in 1:n_inds){
   for(j in 1:n_inds){
@@ -189,8 +259,7 @@ for(i in 1:n_inds){
   }
 }
 
-
-#get night data only (set non-night indexes to NA)
+#get night data only for some plots (set non-night indexes to NA)
 dyad_dists_night <- dyad_dists
 head_corrs_night <- head_corrs
 speed_diffs_night <- speed_diffs
@@ -217,52 +286,23 @@ for(i in 1:(n_inds-1)){
   }
 }
 
-#calculate mean, median, iqr of metrics during relevant periods only, as a function of distance apart
-metrics <- list()
-metrics$dist_bins <- dist_bins
-
-#get statistics of the distribution for each metric within each bin
-metrics$head_corr <- get_distrib_statistics(head_corrs_night, dyad_dists, dist_bins)
-metrics$speed_diff <- get_distrib_statistics(speed_diffs_night, dyad_dists, dist_bins)
-metrics$log_speed_diff <- get_distrib_statistics(log_speed_diffs_night, dyad_dists, dist_bins)
-metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night, dyad_dists, dist_bins)
-metrics$dyad_dist_change_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night, dyad_dists, dist_bins)
-metrics$approach <- get_distrib_statistics(dyad_dist_changes_night[which(dyad_dist_changes!=0)] < 0, dyad_dists, dist_bins)
-metrics$approach_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night < 0, dyad_dists, dist_bins)
-metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night)*180/pi, dyad_dists, dist_bins)
-metrics$head_twd <- get_distrib_statistics(head_twd_night, dyad_dists, dist_bins)
-
-#Plot: Separate out probability of approach when in different situations:
-#1. "Leader" is moving away from the focal - p_follow (move toward vs move away or stay stationary)
-#2. "Leader" is moving toward from the focal - p_converge (move toward vs move away or stay stationary)
-#3. "Leader" is stationary - p_approach (move toward vs move away or stay stationary)
-#Two versions - either we include the focal being stationary in the denominator (_all), or we don't (_moving)
-#Make a data frame version of this analysis
-heads_past <- matrix(NA, nrow = n_inds, ncol = n_times)
-speeds_past <- matrix(NA, nrow = n_inds, ncol = n_times)
-for(i in 1:n_inds){
-  out <- cocomo::get_heading_and_speed_temporal(x_i = xs[i,], y_i = ys[i,], t_window = speed_dt, forward = F)
-  heads_past[i,] <- out$heads
-  speeds_past[i,] <- out$speeds
-}
-
-#Data frame to hold all interactions data at night
+#----Data frame to hold all 'interactions' data at night----
 #i is the "ego", i.e. the one whose behavior in response to "other" we are considering
 #j is the "other, i.e. the reference individual relative to whom i's behavior is being considered
 approach_data <- data.frame(i_ego = rep(rep(1:n_inds, n_inds),n_times), 
                             j_other = rep(rep(1:n_inds, each = n_inds),n_times),
                             tidx = rep(1:n_times, each = n_inds*n_inds))
 
-#remove non-night columns
+#remove non-night columns (otherwise we might run out of memory :/)
 approach_data <- approach_data[which(approach_data$tidx %in% relevant_t_idxs),]
 
-#add columns:
+#columns in the data frame
 #x_i = x location of individual i
 #y_i = y location of individual i
-#x_j
-#y_j
-#head_i_fut - future heading of i (computed into the future)
-#head_i_past - past heading of i (computed from the previous dt to now)
+#x_j = x location of individual j
+#y_j = y location of individual j
+#head_i_fut - future heading of i (direction vector pointing from my position now to my position speed_dt seconds into the future)
+#head_i_past - past heading of i (direction vector pointing from my position in the past (speed_dt seconds ago) to my position now)
 #head_j_fut <- future heading of j
 #head_j_past <- past heading of j
 #speed_i_fut <- speed of i in the future
@@ -284,23 +324,60 @@ approach_data$speed_i_past <- speeds_past[cbind(approach_data$i_ego, approach_da
 approach_data$speed_j_past <- speeds_past[cbind(approach_data$j_other, approach_data$tidx)]
 approach_data$dyad_dist <- dyad_dists[cbind(approach_data$i_ego, approach_data$j_other, approach_data$tidx)]
 
-#unit vector pointing from i to j and from j to i
+#unit vector pointing from i to j and from j to i (for use below)
 dx_itoj <- (approach_data$x_j - approach_data$x_i) / approach_data$dyad_dist
 dy_itoj <- (approach_data$y_j - approach_data$y_i) / approach_data$dyad_dist
 dx_jtoi <- (approach_data$x_i - approach_data$x_j) / approach_data$dyad_dist
 dy_jtoi <- (approach_data$y_i - approach_data$y_j) / approach_data$dyad_dist
 
-#past heading of j_other relative to direction toward i_ego (0 means j was moving directly toward i's position, pi means directly away)
+#angle between past heading of j_other and vector pointing from j_other to i_ego (0 means j was moving directly toward i's position, pi means j was moving directly away)
 approach_data$j_past_head_twd_i <- acos(cos(approach_data$head_j_past)*dx_jtoi + sin(approach_data$head_j_past)*dy_jtoi)
+
+#angle between future heading of i_ego and vector pointing from i_ego to j_other (0 means i_ego moves directly toward j's position, pi means i moves directly away)
 approach_data$i_fut_head_twd_j <- acos(cos(approach_data$head_i_fut)*dx_itoj + sin(approach_data$head_i_fut)*dy_itoj)
 
-#past behavior of j_other
-appraoch_data$past_behav_j <- NA
-approach_data$past_behav_j[which(approach_data$j_past_head_twd_i > pi/2 & approach_data$speed_j_past > min_speed_to_compute_heading)] <- 'away'
+#past behavior of j_other in categories - 'away' from i_ego, 'toward' i_ego or 'stationary' (not moving more than min_speed_to_compute_heading)
+approach_data$past_behav_j <- NA
+approach_data$past_behav_j[which(approach_data$j_past_head_twd_i >= pi/2 & approach_data$speed_j_past >= min_speed_to_compute_heading)] <- 'away'
+approach_data$past_behav_j[which(approach_data$j_past_head_twd_i < pi/2 & approach_data$speed_j_past >= min_speed_to_compute_heading)] <- 'toward'
+approach_data$past_behav_j[which(approach_data$speed_j_past < min_speed_to_compute_heading)] <- 'stationary'
+
+#future behavior of i_ego - 'away' from j_other, 'toward' j_other, or 'statinoary' (not moving more than min_speed_to_compute_heading)
+approach_data$fut_behav_i <- NA
+approach_data$fut_behav_i[which(approach_data$i_fut_head_twd_j >= pi/2 & approach_data$speed_i_fut >= min_speed_to_compute_heading)] <- 'away'
+approach_data$fut_behav_i[which(approach_data$i_fut_head_twd_j < pi/2 & approach_data$speed_i_fut >= min_speed_to_compute_heading)] <- 'toward'
+approach_data$fut_behav_i[which(approach_data$speed_i_fut < min_speed_to_compute_heading)] <- 'stationary'
+
+#future behavior of i_ego as a binary variable, including stationary as 'not' doing the behavior
+#this will be 1 if i_ego approaches j_other and 0 if they either remain stationary or move away
+approach_data$i_approaches_j <- NA
+approach_data$i_approaches_j[which(!is.na(approach_data$fut_behav_i))] <- 0
+approach_data$i_approaches_j[which(approach_data$fut_behav_i == 'toward')] <- 1
+
+#future behavior of i_ego as a binary variable, excluding when they are stationary (i.e. stationary is considered NA)
+#this will be 1 if i_ego approaches j_other, 0 if they move away, and NA if they are stationary
+approach_data$i_approaches_j_given_moving <- NA
+approach_data$i_approaches_j_given_moving[which(approach_data$fut_behav_i == 'away')] <- 0
+approach_data$i_approaches_j_given_moving[which(approach_data$fut_behav_i == 'toward')] <- 1
 
 #-----PLOTS-----
 
 #----Part 1: Spatial scales analyses----
+
+#calculate mean, median, iqr of metrics during relevant periods only, as a function of distance apart
+metrics <- list()
+metrics$dist_bins <- dist_bins
+
+#get statistics of the distribution for each metric within each bin
+metrics$head_corr <- get_distrib_statistics(head_corrs_night, dyad_dists, dist_bins)
+metrics$speed_diff <- get_distrib_statistics(speed_diffs_night, dyad_dists, dist_bins)
+metrics$log_speed_diff <- get_distrib_statistics(log_speed_diffs_night, dyad_dists, dist_bins)
+metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night, dyad_dists, dist_bins)
+metrics$dyad_dist_change_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night, dyad_dists, dist_bins)
+metrics$approach <- get_distrib_statistics(dyad_dist_changes_night[which(dyad_dist_changes!=0)] < 0, dyad_dists, dist_bins)
+metrics$approach_when_moving <- get_distrib_statistics(dyad_dist_changes_when_moving_night < 0, dyad_dists, dist_bins)
+metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night)*180/pi, dyad_dists, dist_bins)
+metrics$head_twd <- get_distrib_statistics(head_twd_night, dyad_dists, dist_bins)
 
 #Plot: Angle between headings 
 plotpath <- paste0(dir, 'plots/spatial_scales/ang_between_heads.png')
@@ -333,7 +410,6 @@ plotpath <- paste0(dir, 'plots/spatial_scales/dyad_dist_change_when_moving.png')
 ylab = 'Change in dyadic distance (m)'
 dat <- metrics$dyad_dist_change_when_moving
 make_plot(dat, plotpath, ylab, abline_y = 0)
-
 
 #Plot: Probability of approaching (when moving)
 plotpath <- paste0(dir, 'plots/spatial_scales/p_approach_when_moving.png')
@@ -426,7 +502,7 @@ labs <- paste0(hour_bins[1:(length(hour_bins)-1)],'-', hour_bins[2:length(hour_b
 legend('bottomright', legend = labs, col = cols, lwd = 2)
 dev.off()
 
-#---Part 3: Leader/follower analyses---
+#---Part 3: Leader/follower analyses (original version not accounting for past behavior of "other")---
 
 #Plot: Pairwise leader/follower relations
 #for each pair, get probability of i moving toward j
@@ -618,8 +694,23 @@ p2 <- ggplot(lead_by_night, aes(x=code, y=follow_prob, fill = code)) +
   scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
 ggsave(plot = p2, filename = plotpath)
 
+#-----Part 4: plots for interactions analysis (accounting for past behavior of "other")----
 
+#Separate out probability of approach when in different situations:
+#1. "Other" is moving away from the ego - 'follow'
+#2. "Other" is moving toward from the ego - 'converge'
+#3. "Other" is stationary - 'join'
+#Two versions - either we include the ego being stationary as a non-response (_all), or we exclude stationary cases and therefore condition on the ego moving (_moving)
 
+#Aggregate patterns across dyads
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_all.png'), other_behav = NULL, include_moving_only = F)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_moving.png'), other_behav = NULL, include_moving_only = T)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all.png'), other_behav = 'away', include_moving_only = F)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving.png'), other_behav = 'away', include_moving_only = T)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/converge_all.png'), other_behav = 'toward', include_moving_only = F)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/converge_moving.png'), other_behav = 'toward', include_moving_only = T)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_all.png'), other_behav = 'stationary', include_moving_only = F)
+make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_moving.png'), other_behav = 'stationary', include_moving_only = T)
 
 #TODO:
 #look into autocorrelation, consider downsampling 
