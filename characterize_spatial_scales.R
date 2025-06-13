@@ -166,6 +166,8 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
 
 #----LOAD AND PROCESS DATA----
 
+print('loading and processing data')
+
 #Load data
 gpsfile <- paste0(dir, 'data_namibia/processed/lion_omukutu_xy_level1.RData')
 load(gpsfile) 
@@ -370,12 +372,16 @@ approach_data$i_approaches_j_given_moving[which(approach_data$fut_behav_i == 'to
 
 #save data frame
 if(!is.null(savename_df)){
-  save(list = c('approach_data'), filename = paste0(dir,savename_df))
+  print('saving cohesion dataframe (approach_data)')
+  save(list = c('approach_data'), file = paste0(dir,savename_df))
 }
 
 #-----PLOTS-----
 
 if(make_plots){
+  
+  print('making plots')
+  
   #----Analysis 1: Spatial scales analyses----
   
   #calculate mean, median, iqr of metrics during relevant periods only, as a function of distance apart
