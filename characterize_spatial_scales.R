@@ -55,7 +55,7 @@ make_plots <-  T #whether to generate plots or not
 get_distrib_statistics <- function(vals, x, bins, fit_gam = F, gam_family = 'gaussian', gam_k = 5){
   out <- list()
   out$bins <- bins
-  out$mean <- out$median <- out$q75 <- out$q25 <- out$q025 <- out$q975 <- rep(NA, length(bins)-1)
+  out$mean <- out$median <- out$q75 <- out$q25 <- out$q025 <- out$q975 <- out$n <- rep(NA, length(bins)-1)
   #loop over all bins
   for(i in 1:(length(bins)-1)){
     
@@ -69,6 +69,7 @@ get_distrib_statistics <- function(vals, x, bins, fit_gam = F, gam_family = 'gau
     out$q25[i] <- quantile(vals[idxs], 0.25, na.rm=T)
     out$q025[i] <- quantile(vals[idxs], 0.025, na.rm=T)
     out$q975[i] <- quantile(vals[idxs], 0.975, na.rm=T)
+    out$n[i] <- sum(!is.na(vals[idxs]))
   }
   
   if(fit_gam){
@@ -117,7 +118,8 @@ make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (
 
 #Plotting function for 'interactions' (i.e. following, converging, joining)
 #other_behav should be either NULL (use all data), 'toward', 'away', or 'stationary'
-make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other_behav = NULL, include_moving_only = F){
+#stratify_by gives whether to stratify by dyad, can be 'ego','other' or NULL (if you want to make the plot aggregating across all dyads)
+make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other_behav = NULL, include_moving_only = F, stratify_by = NULL, min_points_to_plot = 60*60){
   
   #if indexes to subset by aren't specified, use all rows of data
   if(is.null(other_behav)){
@@ -126,12 +128,8 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
     idxs_to_use <- which(approach_data$past_behav_j == other_behav)
   }
   
-  #get means by distance bin
-  if(include_moving_only){
-    toward <- get_distrib_statistics(vals = approach_data$i_approaches_j_given_moving[idxs_to_use], x = approach_data$dyad_dist[idxs_to_use], bins = dist_bins)
-  } else{
-    toward <- get_distrib_statistics(vals = approach_data$i_approaches_j[idxs_to_use], x = approach_data$dyad_dist[idxs_to_use], bins = dist_bins)
-  }
+  #subset to only data we need to use
+  dat <- approach_data[idxs_to_use,]
   
   #get midpoints of bins
   mids <- dist_bins[1:(length(dist_bins)-1)] + diff(dist_bins)/2
@@ -151,15 +149,85 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
     }
   }
   
-  #make plot
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  if(include_moving_only){
-    plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach (given moved)', main = main_lab)
-    abline(h=0.5, lty = 2)
+  if(is.null(stratify_by)){
+    #get means by distance bin
+    if(include_moving_only){
+      toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving, x = dat$dyad_dist, bins = dist_bins)
+    } else{
+      toward <- get_distrib_statistics(vals = dat$i_approaches_j, x = dat$dyad_dist, bins = dist_bins)
+    }
+    
+    #make plot
+    png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
+    if(include_moving_only){
+      plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach (given moved)', main = main_lab)
+      abline(h=0.5, lty = 2)
+    } else{
+      plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach', main = main_lab)
+    }
+    dev.off()
   } else{
-    plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach', main = main_lab)
+    n_inds <- max(approach_data$i_ego)
+    n_bins <- length(dist_bins)-1
+    approach_probs <- ns <- array(NA, dim = c(n_inds, n_inds, n_bins))
+    for(i in 1:n_inds){
+      for(j in 1:n_inds){
+        if(i!=j){
+          idxs <- which(dat$i_ego==i & dat$j_other==j)
+          #get means by distance bin
+          if(include_moving_only){
+            toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving[idxs], x = dat$dyad_dist[idxs], bins = dist_bins)
+          } else{
+            toward <- get_distrib_statistics(vals = dat$i_approaches_j[idxs], x = dat$dyad_dist[idxs], bins = dist_bins)
+          }
+          approach_probs[i,j,] <- toward$mean
+          ns[i,j,] <- toward$n
+        }
+      }
+    }
+    approach_probs[which(ns < min_points_to_plot)] <- NA
+    ylims <- c(min(approach_probs,na.rm=T), max(approach_probs,na.rm=T))
+    
+    #make the plot
+    png(filename = plotpath, width = 12, height = 6, units = 'in', res = 300)
+    par(mfrow = c(2,3), mar = c(3,3,1,1))
+    cols <- viridis(n_inds)
+    
+    if(stratify_by == 'other'){
+      for(j in 1:n_inds){
+        plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = ylims, log = 'x', main = paste0('Other = ',ids$code[j]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
+        for(i in 1:n_inds){
+          if(i!=j){
+            curr <- approach_probs[i,j,]
+            lines(mids, curr, lwd = 2, col = cols[i])
+          }
+        }
+        if(include_moving_only){
+          abline(h=0.5, lty = 2)
+        }
+        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Ego = ',ids$code))
+      }
+    }
+    if(stratify_by == 'ego'){
+      for(i in 1:n_inds){
+        plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = ylims, log = 'x', main = paste0('Ego = ',ids$code[i]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
+        for(j in 1:n_inds){
+          if(i!=j){
+            curr <- approach_probs[i,j,]
+            lines(mids, curr, lwd = 2, col = cols[j])
+          }
+        }
+        if(include_moving_only){
+          abline(h=0.5, lty = 2)
+        }
+        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Other = ',ids$code))
+      }
+    }
+    dev.off()
+    
+    
+    
   }
-  dev.off()
   
 }
 
@@ -723,7 +791,7 @@ if(make_plots){
   #Two versions - either we include the ego being stationary as a non-response (_all), or we exclude stationary cases and therefore condition on the ego moving (_moving)
   
   #Aggregate patterns across dyads
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_all.png'), other_behav = NULL, include_moving_only = F)
+  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_all.png'), other_behav = NULL, include_moving_only = F, stratify_by = 'ego')
   make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_moving.png'), other_behav = NULL, include_moving_only = T)
   make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all.png'), other_behav = 'away', include_moving_only = F)
   make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving.png'), other_behav = 'away', include_moving_only = T)
@@ -732,7 +800,42 @@ if(make_plots){
   make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_all.png'), other_behav = 'stationary', include_moving_only = F)
   make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_moving.png'), other_behav = 'stationary', include_moving_only = T)
 
+  #Comparing patterns across different dyads
+  
+  #Following
+  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving_by_ego.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'ego')
+  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving_by_other.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'other')
+  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all_by_ego.png'), other_behav = 'away', include_moving_only = F, stratify_by = 'ego')
+  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all_by_other.png'), other_behav = 'away', include_moving_only = F, stratify_by = 'other')
+  
+  #Could add in analyses of converging and joining as well, but will skip it for now
+  
+  #"Following" heat map for the most relevant distance bin (5 - 200 m)
+  p_approach_middle <- n_middle <- matrix(NA, nrow = n_inds, ncol = n_inds)
+  dat_curr <- approach_data[which(approach_data$past_behav_j=='away'),]
+  for(i in 1:n_inds){
+    for(j in 1:n_inds){
+      idxs <- which(dat_curr$dyad_dist >= 5 & dat_curr$dyad_dist < 200 & dat_curr$i_ego == i & dat_curr$j_other == j)
+      p_approach_middle[i,j] <- mean(dat_curr$i_approaches_j_given_moving[idxs], na.rm=T)
+      n_middle[i,j] <- sum(!is.na(dat_curr$i_approaches_j_given_moving[idxs]))
+    }
+  }
+  
+  plotpath <- paste0(dir, 'plots/interaction_types/follow_moving_heatmap_5-200m.png')
+  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
+  image.plot(p_approach_middle, xaxt='n', yaxt='n' ,zlim=c(min(p_approach_middle,na.rm=T),1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'Following prob when 5-200 m apart')
+  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code, las = 2)
+  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code, las=2)
+  y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
+  x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
+  text(x,y,paste0(round(c(p_approach_middle)*100),'%'))
+  dev.off()
+  
+  #Could add heatmaps for other behaviors, but skipping for now
+  
 }
+
+
 
 #TODO:
 #look into autocorrelation, consider downsampling 
