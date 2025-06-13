@@ -3,16 +3,19 @@
 #This script so far has 3 parts:
 #Part 1 looks at spatial scales of coordination by plotting various dyadic 
 #coordination-related metrics (e.g. heading correlation, change in dyadic distance, etc.)
-#as a function of distance between pairs.
+#as a function of distance between pairs, across all dyads.
 #Part 2 makes some more basic descriptive plots of speed, spread, polarization, etc. 
 #and their relationship with time of day.
-#Part 3 looks into leader/follower relationships during the night. This is defined based
-#on the probability that one individual (the follower) moves in the direction of another's
-#current location (the leader)
+#Part 3 looks at cohesion on a dyadic level (i.e. thinking about relationships between specific dyads,
+#so a kind of leader-follower type analysis).
+#This is defined based on the probability that one individual (the "follower") moves in the direction of another's
+#(the "leader") current location
 
 library(cocomo)
 library(lubridate)
 library(fields)
+library(ggplot2)
+library(viridis)
 
 #PARAMETERS - MODIFY THESE
 
@@ -483,6 +486,72 @@ plot(c(p_approach_middle),c(t(p_approach_middle)), cex = 1, pch = 19, xlab = 'Pr
 lines(c(0,1),c(1,0),lty =2)
 dev.off()
 
+#Plot: leadership hierarchy (sorted by mean leading rate)
+mean_lead <- colMeans(p_approach_middle, na.rm=T)
+ord <- order(mean_lead, decreasing = F)
+plotpath <- paste0(dir, 'plots/dyadic/approach_heatmap_10-500m_sorted.png')
+png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
+image.plot(p_approach_middle[ord,ord], xaxt='n', yaxt='n' ,zlim=c(0,1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'P(approach) when 10-500 m apart')
+axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las = 2)
+axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las=2)
+y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
+x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
+text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
+dev.off()
+
+#Plots: Is the leadership hierarchy consistent across nights?
+periods$date <- as.Date(periods$start_time)
+n_nights <- nrow(periods)
+p_approach_by_night <- npoints_by_night <- array(NA, dim = c(n_inds,n_inds,n_nights))
+for(p in 1:nrow(periods)){
+  t0 <- periods$t0_idx[p]
+  tf <- periods$tf_idx[p]
+  for(i in 1:n_inds){
+    for(j in 1:n_inds){
+      curr <- head_twd_night[i,j,t0:tf]
+      dists_curr <- dyad_dists[i,j,t0:tf]
+      idxs <- which(dists_curr >= 10 & dists_curr < 500)
+      npoints_by_night[i,j,p] <- sum(!is.na(curr[idxs]))
+      p_approach_by_night[i,j,p] <- mean(curr[idxs]< pi/2,na.rm=T)
+    }
+  }
+}
+p_approach_by_night[which(npoints_by_night < 60*10)] <- NA
+follow_by_night_mat <- apply(p_approach_by_night, c(1,3), mean, na.rm=T)
+lead_by_night_mat <- apply(p_approach_by_night, c(2,3), mean, na.rm=T)
+follow_by_night_mat[which(is.nan(follow_by_night_mat))] <- NA
+lead_by_night_mat[which(is.nan(lead_by_night_mat))] <- NA
+
+#store in a data frame
+p_approach_dat <- data.frame(follower_idx = rep(rep(1:n_inds, n_inds),n_nights), 
+                             leader_idx = rep(rep(1:n_inds, each = n_inds),n_nights),
+                             night_idx = rep(1:n_nights, each = n_inds*n_inds))
+p_approach_dat$prob_approach <- p_approach_by_night[cbind(p_approach_dat$follower_idx, p_approach_dat$leader_idx, p_approach_dat$night_idx)]
+p_approach_dat$follower_id <- ids$code[p_approach_dat$follower_idx]
+p_approach_dat$leader_id <- ids$code[p_approach_dat$leader_idx]
+p_approach_dat$date <- nights[p_approach_dat$night_idx]
+p <- ggplot(p_approach_dat, aes(x=leader_id, y=prob_approach)) + 
+  geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2))
+
+#probability of being followed (mean across all conspecifics) each night
+lead_by_night <- data.frame(ind_idx = rep(1:n_inds, n_nights),
+                            night_idx = rep(1:n_nights, each = n_inds))
+lead_by_night$lead_prob <- lead_by_night_mat[cbind(lead_by_night$ind_idx, lead_by_night$night_idx)]
+lead_by_night$follow_prob <- follow_by_night_mat[cbind(lead_by_night$ind_idx, lead_by_night$night_idx)]
+lead_by_night$code <- ids$code[lead_by_night$ind_idx]
+
+plotpath <- paste0(dir, 'plots/dyadic/lead_by_night_10-500m.png')
+p <- ggplot(lead_by_night, aes(x=code, y=lead_prob, fill = code)) + 
+  geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2)) + theme_minimal() + 
+  scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
+ggsave(plot = p, filename = plotpath)
+
+plotpath <- paste0(dir, 'plots/dyadic/follow_by_night_10-500m.png')
+p2 <- ggplot(lead_by_night, aes(x=code, y=follow_prob, fill = code)) + 
+  geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2)) + theme_minimal() + 
+  scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
+ggsave(plot = p2, filename = plotpath)
+
 #TODO:
 #look into autocorrelation, consider downsampling 
 #model with autocorrelation model to get error bars 
@@ -490,10 +559,3 @@ dev.off()
 #different time scales - 5 sec, 10 sec, 30, sec, 1 min ,5, 10
 #remove dyad dist changes if both below a speed threshold
 
-data <- data.frame(dist = c(dyad_dists), approach = c(dyad_dist_changes_when_moving_night < 0))
-data <- data[complete.cases(data),]
-data <- data[which(data$dist < 10000),]
-test <- gam(approach ~ s(dist,3), data = data, family = 'binomial')
-newx <- seq(1,5000)
-predicted <- predict(test, newdata = data.frame(dist = newx), type = 'response',se=T)
-plot(newx, predicted, type = 'l', lwd = 3, log = 'x')
