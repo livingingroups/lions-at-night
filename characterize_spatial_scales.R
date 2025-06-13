@@ -691,7 +691,7 @@ if(make_plots){
   p_approach_dat$prob_approach <- p_approach_by_night[cbind(p_approach_dat$follower_idx, p_approach_dat$leader_idx, p_approach_dat$night_idx)]
   p_approach_dat$follower_id <- ids$code[p_approach_dat$follower_idx]
   p_approach_dat$leader_id <- ids$code[p_approach_dat$leader_idx]
-  p_approach_dat$date <- nights[p_approach_dat$night_idx]
+  p_approach_dat$date <- periods$date[p_approach_dat$night_idx]
   p <- ggplot(p_approach_dat, aes(x=leader_id, y=prob_approach)) + 
     geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2))
   
