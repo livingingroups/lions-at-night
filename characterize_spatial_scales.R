@@ -232,6 +232,72 @@ metrics$approach_when_moving <- get_distrib_statistics(dyad_dist_changes_when_mo
 metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night)*180/pi, dyad_dists, dist_bins)
 metrics$head_twd <- get_distrib_statistics(head_twd_night, dyad_dists, dist_bins)
 
+#Plot: Separate out probability of approach when in different situations:
+#1. "Leader" is moving away from the focal - p_follow (move toward vs move away or stay stationary)
+#2. "Leader" is moving toward from the focal - p_converge (move toward vs move away or stay stationary)
+#3. "Leader" is stationary - p_approach (move toward vs move away or stay stationary)
+#Two versions - either we include the focal being stationary in the denominator (_all), or we don't (_moving)
+#Make a data frame version of this analysis
+heads_past <- matrix(NA, nrow = n_inds, ncol = n_times)
+speeds_past <- matrix(NA, nrow = n_inds, ncol = n_times)
+for(i in 1:n_inds){
+  out <- cocomo::get_heading_and_speed_temporal(x_i = xs[i,], y_i = ys[i,], t_window = speed_dt, forward = F)
+  heads_past[i,] <- out$heads
+  speeds_past[i,] <- out$speeds
+}
+
+#Data frame to hold all interactions data at night
+#i is the "ego", i.e. the one whose behavior in response to "other" we are considering
+#j is the "other, i.e. the reference individual relative to whom i's behavior is being considered
+approach_data <- data.frame(i_ego = rep(rep(1:n_inds, n_inds),n_times), 
+                            j_other = rep(rep(1:n_inds, each = n_inds),n_times),
+                            tidx = rep(1:n_times, each = n_inds*n_inds))
+
+#remove non-night columns
+approach_data <- approach_data[which(approach_data$tidx %in% relevant_t_idxs),]
+
+#add columns:
+#x_i = x location of individual i
+#y_i = y location of individual i
+#x_j
+#y_j
+#head_i_fut - future heading of i (computed into the future)
+#head_i_past - past heading of i (computed from the previous dt to now)
+#head_j_fut <- future heading of j
+#head_j_past <- past heading of j
+#speed_i_fut <- speed of i in the future
+#speed_j_fut <- speed of j in the future
+#speed_i_past <- speed of i in the past
+#speed_j_past <- speed of j in the past
+#dyad_dist - distance between i and j
+approach_data$x_i <- xs[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$y_i <- ys[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$x_j <- xs[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$y_j <- ys[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$head_i_fut <- heads[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$head_j_fut <- heads[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$head_i_past <- heads_past[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$head_j_past <- heads_past[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$speed_i_fut <- speeds[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$speed_j_fut <- speeds[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$speed_i_past <- speeds_past[cbind(approach_data$i_ego, approach_data$tidx)]
+approach_data$speed_j_past <- speeds_past[cbind(approach_data$j_other, approach_data$tidx)]
+approach_data$dyad_dist <- dyad_dists[cbind(approach_data$i_ego, approach_data$j_other, approach_data$tidx)]
+
+#unit vector pointing from i to j and from j to i
+dx_itoj <- (approach_data$x_j - approach_data$x_i) / approach_data$dyad_dist
+dy_itoj <- (approach_data$y_j - approach_data$y_i) / approach_data$dyad_dist
+dx_jtoi <- (approach_data$x_i - approach_data$x_j) / approach_data$dyad_dist
+dy_jtoi <- (approach_data$y_i - approach_data$y_j) / approach_data$dyad_dist
+
+#past heading of j_other relative to direction toward i_ego (0 means j was moving directly toward i's position, pi means directly away)
+approach_data$j_past_head_twd_i <- acos(cos(approach_data$head_j_past)*dx_jtoi + sin(approach_data$head_j_past)*dy_jtoi)
+approach_data$i_fut_head_twd_j <- acos(cos(approach_data$head_i_fut)*dx_itoj + sin(approach_data$head_i_fut)*dy_itoj)
+
+#past behavior of j_other
+appraoch_data$past_behav_j <- NA
+approach_data$past_behav_j[which(approach_data$j_past_head_twd_i > pi/2 & approach_data$speed_j_past > min_speed_to_compute_heading)] <- 'away'
+
 #-----PLOTS-----
 
 #----Part 1: Spatial scales analyses----
@@ -499,7 +565,7 @@ x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_i
 text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
 dev.off()
 
-#Plots: Is the leadership hierarchy consistent across nights?
+#Plots: Is the 'leadership' hierarchy consistent across nights?
 periods$date <- as.Date(periods$start_time)
 n_nights <- nrow(periods)
 p_approach_by_night <- npoints_by_night <- array(NA, dim = c(n_inds,n_inds,n_nights))
@@ -552,10 +618,12 @@ p2 <- ggplot(lead_by_night, aes(x=code, y=follow_prob, fill = code)) +
   scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
 ggsave(plot = p2, filename = plotpath)
 
+
+
+
 #TODO:
 #look into autocorrelation, consider downsampling 
 #model with autocorrelation model to get error bars 
 #nearest neighbor
 #different time scales - 5 sec, 10 sec, 30, sec, 1 min ,5, 10
-#remove dyad dist changes if both below a speed threshold
 
