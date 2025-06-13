@@ -821,14 +821,17 @@ if(make_plots){
     }
   }
   
+  mean_lead <- colMeans(p_approach_middle, na.rm=T)
+  ord <- order(mean_lead, decreasing = F)
+  
   plotpath <- paste0(dir, 'plots/interaction_types/follow_moving_heatmap_5-200m.png')
   png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  image.plot(p_approach_middle, xaxt='n', yaxt='n' ,zlim=c(min(p_approach_middle,na.rm=T),1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'Following prob when 5-200 m apart')
-  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code, las = 2)
-  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code, las=2)
+  image.plot(p_approach_middle[ord,ord], xaxt='n', yaxt='n' ,zlim=c(min(p_approach_middle,na.rm=T),1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'P(follow) when 5-200 m apart')
+  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las = 2)
+  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las=2)
   y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
   x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
-  text(x,y,paste0(round(c(p_approach_middle)*100),'%'))
+  text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
   dev.off()
   
   #Could add heatmaps for other behaviors, but skipping for now
