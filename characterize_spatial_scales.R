@@ -43,7 +43,7 @@ start_times <- as.POSIXct(paste(seq.Date(date('2023-05-06'),date('2023-06-15'),b
 end_times <- as.POSIXct(paste(seq.Date(date('2023-05-07'),date('2023-06-16'),by=1), '06:00:00'), tz = 'UTC') #timestamps of times to end each analysis period (night) - replace eventually with info on when the group left its rest spot
 
 savename_df <- 'data_namibia/processed/cohesion_data.RData' #where to save the data frame 'approach_data' (from analysis 4) - if NULL, nothing will be saved
-make_plots <-  T #whether to generate plots or not
+make_plots <-  F #whether to generate plots or not
 
 #-------------FUNCTIONS----------------
 
@@ -261,6 +261,7 @@ idxs_to_remove <- setdiff(1:n_times, relevant_t_idxs)
 #COMPUTE METRICS
 
 #headings and speeds (future)
+print('...headings and speeds...')
 heads <- speeds <- matrix(NA, nrow = n_inds, ncol = n_times)
 for(i in 1:n_inds){
   out <- cocomo::get_heading_and_speed_temporal(x_i = xs[i, ], y_i = ys[i,], t_window = speed_dt, forward = T)
@@ -284,14 +285,25 @@ for(i in 1:n_inds){
 }
 
 #dyadic distances
+print('...dyadic distances...')
 dyad_dists <- cocomo::get_group_dyadic_distances(xs, ys)
 
+#group elongation
+print('...elongation...')
+out <- cocomo::get_group_elongation(xs, ys, min_inds_tracked = n_inds - 1)
+elongation <- out$elongation
+long_axis_angle <- out$long_axis_angle
+
 #group polarization (computed for all instances where at least 5 individuals were tracked, otherwise NA)
+print('...polarization...')
 polarization <- cocomo::get_group_polarization(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
 
 #group speed (computed for all instances where at least 5 individuals were tracked, otherwise NA)
+print('...group speed...')
 out <- cocomo::get_group_heading_and_speed(xs, ys, heading_type = 'temporal', t_window = speed_dt, min_inds_tracked = n_inds-1)
 group_speed <- out$speeds
+group_head <- out$heads
+
 
 #get mean dyadic distance (computed for all instances where at least 5 individuals were tracked, otherwise NA)
 mean_dyad_dist <- apply(dyad_dists, 3, FUN = mean, na.rm=T)
@@ -299,6 +311,7 @@ n_tracked <- colSums(!is.na(xs))
 mean_dyad_dist[which(n_tracked < n_inds - 1)] <- NA
 
 #dyadic distance changes, speed differences, and heading correlations between pairs of individuals
+print('...dyadic distance diffs, speed diffs, heading corrs...')
 dyad_dist_changes <- head_corrs <- speed_corrs <- speed_diffs <- log_speed_diffs <- array(NA, dim = c(n_inds,n_inds,n_times))
 for(i in 1:(n_inds-1)){
   for(j in (i+1):n_inds){
@@ -312,6 +325,7 @@ for(i in 1:(n_inds-1)){
 }
 
 #heading relative to others' previous locations
+print('...relative headings...')
 head_twd <- array(NA, dim = c(n_inds, n_inds, n_times))
 for(i in 1:n_inds){
   for(j in 1:n_inds){
@@ -357,6 +371,7 @@ for(i in 1:(n_inds-1)){
   }
 }
 
+print('generating cohesion dataframe (approach_data)')
 #----Data frame to hold all 'interactions' data at night----
 #i is the "ego", i.e. the one whose behavior in response to "other" we are considering
 #j is the "other, i.e. the reference individual relative to whom i's behavior is being considered
@@ -381,6 +396,8 @@ approach_data <- approach_data[which(approach_data$tidx %in% relevant_t_idxs),]
 #speed_i_past <- speed of i in the past
 #speed_j_past <- speed of j in the past
 #dyad_dist - distance between i and j
+#elongation - elongation of the group at time step tidx
+#long_axis_angle - angle of the long axis of the group at time step tidx
 approach_data$x_i <- xs[cbind(approach_data$i_ego, approach_data$tidx)]
 approach_data$y_i <- ys[cbind(approach_data$i_ego, approach_data$tidx)]
 approach_data$x_j <- xs[cbind(approach_data$j_other, approach_data$tidx)]
@@ -394,6 +411,17 @@ approach_data$speed_j_fut <- speeds[cbind(approach_data$j_other, approach_data$t
 approach_data$speed_i_past <- speeds_past[cbind(approach_data$i_ego, approach_data$tidx)]
 approach_data$speed_j_past <- speeds_past[cbind(approach_data$j_other, approach_data$tidx)]
 approach_data$dyad_dist <- dyad_dists[cbind(approach_data$i_ego, approach_data$j_other, approach_data$tidx)]
+
+#group metrics - elongation, long axis angle, group heading, group speed, group tilt
+approach_data$group_elongation <- elongation[approach_data$tidx]
+approach_data$group_long_axis_angle <- long_axis_angle[approach_data$tidx]
+approach_data$group_heading <- group_head[approach_data$tidx]
+approach_data$group_speed <- group_speed[approach_data$tidx]
+approach_data$group_mean_dyad_dist <- mean_dyad_dist[approach_data$tidx]
+tilt_ang <- acos(cos(approach_data$group_long_axis_angle)*cos(approach_data$group_heading) + 
+                                   sin(approach_data$group_long_axis_angle)*sin(approach_data$group_heading))
+tilt_ang[which(tilt_ang > pi/2)] <- pi - tilt_ang[which(tilt_ang > pi/2)]
+approach_data$group_tilt <- tilt_ang / (pi/2)
 
 #columns in the approach_data data frame:
 #unit vector pointing from i to j and from j to i (for use below)
