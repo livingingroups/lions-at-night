@@ -40,19 +40,18 @@ min_points_to_plot <- 3*60*60 #minimum of 3 hrs of data needed to plot things (c
 
 #parameters for spatial scales analyses
 #this uses windows centered on a given value and going val - pct_win/100*val to val + pct_win/100*val
-min_dist <- 5
-max_dist <- 2000
-n_bins <- 50
-pct_win <- 40
-n_boots <- 100
+min_dist_bin <- 5 #minimum distance bin
+max_dist_bin <- 2000 #maximum distance bin
+n_bins <- 50 #number of bins (log spaced)
+pct_win <- 40 #percentage window for each bin (bin will run for x - pct_win*x/100 to x + pct_win*x/100)
+n_boots <- 100 #number of bootstraps to do (resampling nights) to produce error bars
+downsamp_rate <- 10 #downsampling rate for approach data (to save computation)
 
-use_manually_identified_periods <- F #whether to use the manually identified start / stop periods (from movement_bouts.csv, if T) or to use all nights (if F)
-
-calculate_approach_data <- F #whether the generate the data frame of approach data
+calculate_approach_data <- T #whether the generate the data frame of approach data
 load_approach_data <- F #whether the load the cohesion dataframe from file
 savename_df <- 'data_namibia/processed/cohesion_data.RData' #where to save the data frame 'approach_data' (from analysis 4) - if NULL, nothing will be saved
 
-make_cohesion_plots <-  T #whether to generate cohesion (spatial scales) plots or not
+make_cohesion_plots <-  F #whether to generate cohesion (spatial scales) plots or not
 make_leadership_plots <- F #whether to generate the leadership / influence plots or not
 
 #-------------FUNCTIONS----------------
@@ -62,7 +61,6 @@ make_leadership_plots <- F #whether to generate the leadership / influence plots
 #x = what you are binning on (e.g. dyadic distance)
 #bins = bins to use for binning x
 #subset_ids = identity of the non-independent subset (e.g. day) associated with each value, to use for bootstrapping
-
 #the dimensions of vals, x, and subset_ids must be the same
 get_distrib_statistics <- function(vals, x, subset_ids = NULL, n_boots = 100, min_dist=5, max_dist=1500, n_bins=100, pct_win=50){
   out <- list()
@@ -79,6 +77,8 @@ get_distrib_statistics <- function(vals, x, subset_ids = NULL, n_boots = 100, mi
     
     #get relevant stats
     out$mean[i] <- mean(vals[idxs], na.rm=T)
+    
+    out$n[i] <- sum(!is.na(vals[idxs]))
   }
   
   if(!is.null(subset_ids)){
@@ -112,6 +112,12 @@ get_distrib_statistics <- function(vals, x, subset_ids = NULL, n_boots = 100, mi
 }
 
 #helper function to make plots of different metrics vs distance
+#plot include mean (thick black lines) and bootstrapped replicates (based on subset_ids, if present)
+#INPUTS:
+# dat: list containing 
+#   dat$bins: numeric vector of bin centers
+#   dat$mean: numeric vector of values to plot (thick lines)
+#   dat$means_boot: [n_boots x n_bins] dimension matrix of bootstrapped replicate data
 make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (m)', abline_y = NULL, logx = F){
   
   if(is.null(ylim)){
@@ -143,7 +149,8 @@ make_plot <- function(dat, plotpath, ylab, ylim = NULL, xlab = 'Distance apart (
 #Plotting function for 'interactions' (i.e. following, converging, joining)
 #other_behav should be either NULL (use all data), 'toward', 'away', or 'stationary'
 #stratify_by gives whether to stratify by dyad, can be 'ego','other' or NULL (if you want to make the plot aggregating across all dyads)
-make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other_behav = NULL, include_moving_only = F, stratify_by = NULL, min_points_to_plot = 60*60){
+make_approach_vs_dist_plot <- function(approach_data, plotpath, other_behav = NULL, include_moving_only = F, stratify_by = NULL, min_points_to_plot = 60*60,
+                                       min_dist_bin = 5, max_dist_bin = 1000, n_bins = 50, pct_win = 40){
   
   #if indexes to subset by aren't specified, use all rows of data
   if(is.null(other_behav)){
@@ -154,9 +161,6 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
   
   #subset to only data we need to use
   dat <- approach_data[idxs_to_use,]
-  
-  #get midpoints of bins
-  mids <- dist_bins[1:(length(dist_bins)-1)] + diff(dist_bins)/2
   
   #main label
   if(is.null(other_behav)){
@@ -176,33 +180,36 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
   if(is.null(stratify_by)){
     #get means by distance bin
     if(include_moving_only){
-      toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving, x = dat$dyad_dist, bins = dist_bins)
+      toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving, x = dat$dyad_dist, 
+                                       min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
     } else{
-      toward <- get_distrib_statistics(vals = dat$i_approaches_j, x = dat$dyad_dist, bins = dist_bins)
+      toward <- get_distrib_statistics(vals = dat$i_approaches_j, x = dat$dyad_dist, 
+                                       min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
     }
     
     #make plot
     png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
     if(include_moving_only){
-      plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach (given moved)', main = main_lab)
+      plot(toward$bins, toward$mean, pch = 19, cex = 2, type = 'l', lwd = 3, log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach (given moved)', main = main_lab)
       abline(h=0.5, lty = 2)
     } else{
-      plot(mids, toward$mean, pch = 19, cex = 2, col = 'gray', log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach', main = main_lab)
+      plot(toward$bins, toward$mean, pch = 19, cex = 2, type = 'l', lwd = 3, log = 'x', xlab = 'Distance apart (m)', ylab = 'Probability of approach', main = main_lab)
     }
     dev.off()
   } else{
     n_inds <- max(approach_data$i_ego)
-    n_dist_bins <- length(dist_bins)-1
-    approach_probs <- ns <- array(NA, dim = c(n_inds, n_dist_inds, n_dist_bins))
+    approach_probs <- ns <- array(NA, dim = c(n_inds, n_inds, n_bins))
     for(i in 1:n_inds){
       for(j in 1:n_inds){
         if(i!=j){
           idxs <- which(dat$i_ego==i & dat$j_other==j)
           #get means by distance bin
           if(include_moving_only){
-            toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving[idxs], x = dat$dyad_dist[idxs], bins = dist_bins)
+            toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving[idxs], x = dat$dyad_dist[idxs], 
+                                             min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
           } else{
-            toward <- get_distrib_statistics(vals = dat$i_approaches_j[idxs], x = dat$dyad_dist[idxs], bins = dist_bins)
+            toward <- get_distrib_statistics(vals = dat$i_approaches_j[idxs], x = dat$dyad_dist[idxs], 
+                                             min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
           }
           approach_probs[i,j,] <- toward$mean
           ns[i,j,] <- toward$n
@@ -219,32 +226,32 @@ make_approach_vs_dist_plot <- function(approach_data, dist_bins, plotpath, other
     
     if(stratify_by == 'other'){
       for(j in 1:n_inds){
-        plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = ylims, log = 'x', main = paste0('Other = ',ids$code[j]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
+        plot(NULL, xlim = c(min(toward$bins), max(toward$bins)), ylim = ylims, log = 'x', main = paste0('Leader = ',ids$code[j]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
         for(i in 1:n_inds){
           if(i!=j){
             curr <- approach_probs[i,j,]
-            lines(mids, curr, lwd = 2, col = cols[i])
+            lines(toward$bins, curr, lwd = 2, col = cols[i])
           }
         }
         if(include_moving_only){
           abline(h=0.5, lty = 2)
         }
-        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Ego = ',ids$code))
+        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Follower = ',ids$code))
       }
     }
     if(stratify_by == 'ego'){
       for(i in 1:n_inds){
-        plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = ylims, log = 'x', main = paste0('Ego = ',ids$code[i]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
+        plot(NULL, xlim = c(min(toward$bins), max(toward$bins)), ylim = ylims, log = 'x', main = paste0('Follower = ',ids$code[i]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
         for(j in 1:n_inds){
           if(i!=j){
             curr <- approach_probs[i,j,]
-            lines(mids, curr, lwd = 2, col = cols[j])
+            lines(toward$bins, curr, lwd = 2, col = cols[j])
           }
         }
         if(include_moving_only){
           abline(h=0.5, lty = 2)
         }
-        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Other = ',ids$code))
+        legend('bottomleft', col = cols, lwd = 2, legend = paste0('Leader = ',ids$code))
       }
     }
     dev.off()
@@ -268,16 +275,9 @@ load(gpsfile)
 n_inds <- nrow(xs)
 n_times <- ncol(xs)
 
-#Get periods of data to use for spatial scales and leadership analyses
-if(use_manually_identified_periods){
-  # Identify periods to analyze from departures and arrivals csv
-  departures_dat <- read.csv(paste0(dir,'data_namibia/processed/movement_bouts.csv'), header = T, sep = ',', stringsAsFactors=T)
-} else{
-  # Alternatively, use all days
-  start_times <- as.POSIXct(paste(seq.Date(date('2023-05-06'),date('2023-06-15'),by=1), '16:00:00'), tz = 'UTC') #timestamps of times to start each analysis period (night) - replace eventually with info on when the group left its rest spot
-  end_times <- as.POSIXct(paste(seq.Date(date('2023-05-07'),date('2023-06-16'),by=1), '06:00:00'), tz = 'UTC') #timestamps of times to end each analysis period (night) - replace eventually with info on when the group left its rest spot
-}
-
+#Get periods of data to use for spatial scales and leadership analyses (only nighttime data)
+start_times <- as.POSIXct(paste(seq.Date(date('2023-05-06'),date('2023-06-15'),by=1), '16:00:00'), tz = 'UTC') #timestamps of times to start each analysis period (night) - replace eventually with info on when the group left its rest spot
+end_times <- as.POSIXct(paste(seq.Date(date('2023-05-07'),date('2023-06-16'),by=1), '06:00:00'), tz = 'UTC') #timestamps of times to end each analysis period (night) - replace eventually with info on when the group left its rest spot
 
 periods <- data.frame(start_time = start_times, end_time = end_times)
 periods$t0_idx <- match(periods$start_time, timestamps)
@@ -375,11 +375,11 @@ for(i in 1:n_inds){
       #heading of i
       head_i <- heads[i,] 
       
-      #vector pointing from i to j
+      #vector pointing from i to j - check this bit Gen
       dx_ij <- (xs[j,] - xs[i,]) / dyad_dists[i,j,]
       dy_ij <- (ys[j,] - ys[i,]) / dyad_dists[i,j,]
       
-      #angle between these vectors
+      #angle between these vectors - check this bit Gen
       head_twd[i,j,] <- acos(cos(head_i)*dx_ij + sin(head_i)*dy_ij)
     }
   }
@@ -401,6 +401,7 @@ dyad_dist_changes_night[,,idxs_to_remove] <- NA
 head_twd_night[,,idxs_to_remove] <- NA
 
 #remove data when neither individual is moving from dyadic distance changes
+#check this gen
 dyad_dist_changes_when_moving_night <- dyad_dist_changes_night
 for(i in 1:(n_inds-1)){
   for(j in 2:n_inds){
@@ -415,14 +416,17 @@ for(i in 1:(n_inds-1)){
 if(calculate_approach_data){
   print('generating cohesion dataframe (approach_data)')
   #----Data frame to hold all 'interactions' data at night----
-  #i is the "ego", i.e. the one whose behavior in response to "other" we are considering
-  #j is the "other, i.e. the reference individual relative to whom i's behavior is being considered
+  #i is the "ego", i.e. the one whose behavior in response to "other" we are considering - follower
+  #j is the "other, i.e. the reference individual relative to whom i's behavior is being considered - leader
   approach_data <- data.frame(i_ego = rep(rep(1:n_inds, n_inds),n_times), 
                               j_other = rep(rep(1:n_inds, each = n_inds),n_times),
                               tidx = rep(1:n_times, each = n_inds*n_inds))
   
   #remove non-night columns (otherwise we might run out of memory :/)
   approach_data <- approach_data[which(approach_data$tidx %in% relevant_t_idxs),]
+  
+  #downsample to only indexes that are divisible by downsamp_rate = 10 (save computational power)
+  approach_data <- approach_data[which(approach_data$tidx %% downsamp_rate == 0),]
   
   #columns in the approach_data data frame:
   #x_i = x location of individual i
@@ -466,6 +470,7 @@ if(calculate_approach_data){
   tilt_ang[which(tilt_ang > pi/2)] <- pi - tilt_ang[which(tilt_ang > pi/2)]
   approach_data$group_tilt <- tilt_ang / (pi/2)
   
+  #important bit - gen check
   #columns in the approach_data data frame:
   #unit vector pointing from i to j and from j to i (for use below)
   dx_itoj <- (approach_data$x_j - approach_data$x_i) / approach_data$dyad_dist
@@ -534,14 +539,12 @@ if(make_cohesion_plots){
   metrics$dist_bins <- dist_bins
   
   #get statistics of the distribution for each metric within each bin
-  downsamp_idxs <- seq(1, n_times, 60) #downsample to save computational time
-  print(n_boots)
-  print(n_bins)
-  metrics$speed_diff <- get_distrib_statistics(speed_diffs_night[,,downsamp_idxs], dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist, max_dist = max_dist, n_bins = n_bins, pct_win = pct_win)
-  metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night[,,downsamp_idxs], dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist, max_dist = max_dist, n_bins = n_bins, pct_win = pct_win)
-  metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night[,,downsamp_idxs])*180/pi, dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist, max_dist = max_dist, n_bins = n_bins, pct_win = pct_win)
-  metrics$prob_approach <- get_distrib_statistics(head_twd_night[,,downsamp_idxs]<=pi/2, dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist, max_dist = max_dist, n_bins = n_bins, pct_win = pct_win)
-  
+  downsamp_idxs <- seq(1, n_times, downsamp_rate) #downsample to save computational time
+  metrics$speed_diff <- get_distrib_statistics(speed_diffs_night[,,downsamp_idxs], dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+  metrics$dyad_dist_change <- get_distrib_statistics(dyad_dist_changes_night[,,downsamp_idxs], dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+  metrics$ang_between_heads <- get_distrib_statistics(acos(head_corrs_night[,,downsamp_idxs])*180/pi, dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+  metrics$prob_approach <- get_distrib_statistics(head_twd_night[,,downsamp_idxs]<=pi/2, dyad_dists[,,downsamp_idxs], subset_ids[,,downsamp_idxs], n_boots = n_boots, min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+
   #Plot: Angle between headings 
   plotpath <- paste0(dir, 'plots/spatial_scales/ang_between_heads.png')
   ylab <- "Mean angle between headings (degrees)"
@@ -600,259 +603,139 @@ if(make_cohesion_plots){
 }
 
 if(make_leadership_plots){
-  #---Analysis 3: Leader/follower analyses (original version not accounting for past behavior of "other")---
   
-  #Plot: Pairwise leader/follower relations
-  #for each pair, get probability of i moving toward j
-  p_toward_ij <- matrix(NA, nrow = n_inds, ncol = n_inds)
-  for(i in 1:n_inds){
-    for(j in 1:n_inds){
-      if(i!=j){
-        p_toward_ij[i,j] <- mean(head_twd_night[i,j,] < pi/2, na.rm=T)
-      }
-    }
-  }
+  #-----Dyad-level leadership plots----
   
-  plotpath <- paste0(dir, 'plots/dyadic/prob_heading_towards.png')
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  image.plot(p_toward_ij, col = viridis(256), xlab = 'Follower', ylab = 'Leader', xaxt ='n',yaxt='n')
-  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code)
-  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code)
-  dev.off()
+  #For the purposes of this analysis, we define the probability of following as:
+  #Probability of an individual i (the 'follower') moving toward an individual j (the 'leader') given the individual j has, in the past, moved away from i
+  #Numerator: past_behav_j == 'away' && fut_behav_i == 'toward'
+  #Denominator = past_behav_j == 'away' & (fut_behav_i == 'toward' or fut_behav_i = 'away')
+  #In this case, if the follower remains stationary, it is not counted as not following (i.e. not included in the denominator)
+  #Another way to look at it is we are only analyzing instances in which both individuals are moving
+  #Conditioned on that, if i moves away from j, what does j do (does it move toward i or move away from i?)
   
-  #Plots: Heading toward as a function of initial distance apart
-  #Approach as a function of distance (x axis), multi-panel by leader
-  p_approach_vs_dist <- uppers <- lowers <- tots <- array(NA, dim = c(n_inds, n_inds, length(dist_bins)-1))
-  for(d in 1:(length(dist_bins)-1)){
-    for(i in 1:n_inds){
-      for(j in 1:n_inds){
-        if(i != j){
-          curr_twd <- head_twd_night[i,j,] < pi/2
-          curr_dists <- dyad_dists[i,j,]
-          idxs <- which(curr_dists >= dist_bins[d] & curr_dists < dist_bins[d+1])
-          p_approach_vs_dist[i,j,d] <- mean(curr_twd[idxs], na.rm=T)
-          n_approach <- sum(curr_twd[idxs]==1, na.rm=T)
-          n_tot <- sum(!is.na(curr_twd[idxs]))
-          if(n_tot > 0){
-            lowers[i,j,d] <- binom.test(n_approach, n_tot)$conf.int[1]
-            uppers[i,j,d] <- binom.test(n_approach, n_tot)$conf.int[2]
-          }
-          tots[i,j,d] <- n_tot
-        }
-      }
-    }
-  }
+  #Plot 1: Do this across all dyads aggregated across all data
+  #make_approach_vs_dist_plot(approach_data_downsamp, plotpath = paste0(dir, 'plots/leader_follower/p_follow_all_inds.png'), other_behav = 'away', include_moving_only = F, stratify_by = NULL, min_points_to_plot = 60)
+  make_approach_vs_dist_plot(approach_data, plotpath = paste0(dir, 'plots/leader_follower/p_follow_all_inds_moving.png'), other_behav = 'away', include_moving_only = T, stratify_by = NULL, min_points_to_plot = 60)
   
-  #by leader
-  plotpath <- paste0(dir, 'plots/dyadic/prob_approach_vs_dist_by_leader.png')
-  png(filename = plotpath, width = 12, height = 6, units = 'in', res = 300)
-  par(mfrow = c(2,3), mar = c(3,3,1,1))
-  mids <- dist_bins[1:(length(dist_bins)-1)] + diff(dist_bins)/2
-  cols <- viridis(n_inds)
-  cols_err <- paste0(substr(cols, 1,7),'33')
-  for(j in 1:n_inds){
-    plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = c(0,1), log = 'x', main = paste0('Leader = ',ids$code[j]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
-    for(i in 1:n_inds){
-      if(i!=j){
-        curr <- p_approach_vs_dist[i,j,]
-        curr[which(tots[i,j,]<min_points_to_plot)] <- NA
-        lines(mids, curr, lwd = 2, col = cols[i])
-      }
-    }
-    abline(h=0.5, lty = 2)
-    legend('bottomleft', col = cols, lwd = 2, legend = paste0('Follower = ',ids$code))
-  }
-  dev.off()
+  #Plot 2: Stratify by 'other' (leader)
+  #make_approach_vs_dist_plot(approach_data_downsamp, plotpath = paste0(dir, 'plots/leader_follower/p_follow_by_leader.png'), other_behav = 'away', include_moving_only = F, stratify_by = 'other', min_points_to_plot = 60)
+  make_approach_vs_dist_plot(approach_data, plotpath = paste0(dir, 'plots/leader_follower/p_follow_by_leader_moving.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'other', min_points_to_plot = 60)
   
-  #by follower
-  plotpath <- paste0(dir, 'plots/dyadic/prob_approach_vs_dist_by_follower.png')
-  png(filename = plotpath, width = 12, height = 6, units = 'in', res = 300)
-  par(mfrow = c(2,3), mar = c(3,3,1,1))
-  mids <- dist_bins[1:(length(dist_bins)-1)] + diff(dist_bins)/2
-  cols <- viridis(n_inds)
-  cols_err <- paste0(substr(cols, 1,7),'33')
-  for(i in 1:n_inds){
-    plot(NULL, xlim = c(1, dist_bins[length(dist_bins)-1]), ylim = c(0,1), log = 'x', main = paste0('Follower = ',ids$code[i]), ylab = 'P(approach)',xlab = 'Distance apart (m)')
-    for(j in 1:n_inds){
-      if(i!=j){
-        curr <- p_approach_vs_dist[i,j,]
-        curr[which(tots[i,j,]<min_points_to_plot)] <- NA
-        lines(mids, curr, lwd = 2, col = cols[j])
-      }
-    }
-    abline(h=0.5, lty = 2)
-    legend('bottomleft', col = cols, lwd = 2, legend = paste0('Leader = ',ids$code))
-  }
-  dev.off()
+  #Plot 3: Stratify by 'ego' (follower)
+  make_approach_vs_dist_plot(approach_data, plotpath = paste0(dir, 'plots/leader_follower/p_follow_by_follower_moving.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'ego', min_points_to_plot = 60)
   
-  #Plot: Approach probability for all dyads (heatmap), multi-panel by distance bin
-  plotpath <- paste0(dir, 'plots/dyadic/approach_heatmaps_by_dist.png')
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  par(mfrow = c(3,3), mar = c(3,3,1,1))
-  for(d in 1:(length(dist_bins)-1)){
-    curr <- p_approach_vs_dist[,,d]
-    curr[which(tots[,,d]<min_points_to_plot)] <- NA
-    image.plot(curr, xaxt='n', yaxt='n' ,zlim=c(0,1),col=viridis(256),xlab='Follower',ylab='Leader', main = paste0(round(dist_bins[d]),'-',round(dist_bins[d+1]),' m'))
-    axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code, las = 2,cex.axis=0.5)
-    axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code, las=2,cex.axis=0.5)
-    
-  }
-  dev.off()
+  #Plot 4: "Following" heat map for the most relevant distance bin (0 - 200 m)
+  # p_approach_middle <- n_middle <- matrix(NA, nrow = n_inds, ncol = n_inds)
+  # dat_curr <- approach_data[which(approach_data$past_behav_j=='away'),]
+  # for(i in 1:n_inds){
+  #   for(j in 1:n_inds){
+  #     idxs <- which(dat_curr$dyad_dist >= 0 & dat_curr$dyad_dist < 300 & dat_curr$i_ego == i & dat_curr$j_other == j)
+  #     p_approach_middle[i,j] <- mean(dat_curr$i_approaches_j_given_moving[idxs], na.rm=T)
+  #     n_middle[i,j] <- sum(!is.na(dat_curr$i_approaches_j_given_moving[idxs]))
+  #   }
+  # }
+  # 
+  # mean_lead <- rowMeans(p_approach_middle, na.rm=T)
+  # ord <- order(mean_lead, decreasing = T)
+  # 
+  # plotpath <- paste0(dir, 'plots/leader_follower/follow_moving_heatmap_5-200m.png')
+  # png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
+  # image.plot(p_approach_middle[ord,ord], xaxt='n', yaxt='n' ,zlim=c(min(p_approach_middle,na.rm=T),1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'Probability of following when moving (<300 m apart)')
+  # axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las = 1)
+  # axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las=2)
+  # y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
+  # x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
+  # text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
+  # dev.off()
   
-  #Plot: Approach probability for the most relevant "middle" distance window - 10 m to 500 m.
-  p_approach_middle <- n_middle <- matrix(NA, nrow = n_inds, ncol = n_inds)
-  for(i in 1:n_inds){
-    for(j in 1:n_inds){
-      idxs <- which(dyad_dists[i,j,] >= 10 & dyad_dists[i,j,] < 500)
-      p_approach_middle[i,j] <- mean(head_twd_night[i,j,idxs] < pi/2, na.rm=T)
-      n_middle[i,j] <- sum(!is.na(head_twd_night[i,j,idxs]))
-    }
-  }
-  
-  plotpath <- paste0(dir, 'plots/dyadic/approach_heatmap_10-500m.png')
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  image.plot(p_approach_middle, xaxt='n', yaxt='n' ,zlim=c(0,1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'P(approach) when 10-500 m apart')
-  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code, las = 2)
-  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code, las=2)
-  y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
-  x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
-  text(x,y,paste0(round(c(p_approach_middle)*100),'%'))
-  dev.off()
-  
-  #Plot: correlation between leading vs following rates
-  plotpath <- paste0(dir, 'plots/dyadic/leader_follower_correlation_10-500m.png')
-  png(filename = plotpath, width = 6, height = 6, units = 'in', res = 300)
-  plot(c(p_approach_middle),c(t(p_approach_middle)), cex = 1, pch = 19, xlab = 'Probability of approaching',ylab = 'Probability of being approached', xlim = c(0,1),ylim=c(0,1), asp = 1)
-  lines(c(0,1),c(1,0),lty =2)
-  dev.off()
-  
-  #Plot: leadership hierarchy (sorted by mean leading rate)
-  mean_lead <- colMeans(p_approach_middle, na.rm=T)
-  ord <- order(mean_lead, decreasing = F)
-  plotpath <- paste0(dir, 'plots/dyadic/approach_heatmap_10-500m_sorted.png')
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  image.plot(p_approach_middle[ord,ord], xaxt='n', yaxt='n' ,zlim=c(0,1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'P(approach) when 10-500 m apart')
-  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las = 2)
-  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las=2)
-  y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
-  x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
-  text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
-  dev.off()
-  
-  #Plots: Is the 'leadership' hierarchy consistent across nights?
-  periods$date <- as.Date(periods$start_time)
-  n_nights <- nrow(periods)
-  p_approach_by_night <- npoints_by_night <- array(NA, dim = c(n_inds,n_inds,n_nights))
-  for(p in 1:nrow(periods)){
-    t0 <- periods$t0_idx[p]
-    tf <- periods$tf_idx[p]
-    for(i in 1:n_inds){
-      for(j in 1:n_inds){
-        curr <- head_twd_night[i,j,t0:tf]
-        dists_curr <- dyad_dists[i,j,t0:tf]
-        idxs <- which(dists_curr >= 10 & dists_curr < 500)
-        npoints_by_night[i,j,p] <- sum(!is.na(curr[idxs]))
-        p_approach_by_night[i,j,p] <- mean(curr[idxs]< pi/2,na.rm=T)
-      }
-    }
-  }
-  p_approach_by_night[which(npoints_by_night < 60*10)] <- NA
-  follow_by_night_mat <- apply(p_approach_by_night, c(1,3), mean, na.rm=T)
-  lead_by_night_mat <- apply(p_approach_by_night, c(2,3), mean, na.rm=T)
-  follow_by_night_mat[which(is.nan(follow_by_night_mat))] <- NA
-  lead_by_night_mat[which(is.nan(lead_by_night_mat))] <- NA
-  
-  #store in a data frame
-  p_approach_dat <- data.frame(follower_idx = rep(rep(1:n_inds, n_inds),n_nights), 
-                               leader_idx = rep(rep(1:n_inds, each = n_inds),n_nights),
-                               night_idx = rep(1:n_nights, each = n_inds*n_inds))
-  p_approach_dat$prob_approach <- p_approach_by_night[cbind(p_approach_dat$follower_idx, p_approach_dat$leader_idx, p_approach_dat$night_idx)]
-  p_approach_dat$follower_id <- ids$code[p_approach_dat$follower_idx]
-  p_approach_dat$leader_id <- ids$code[p_approach_dat$leader_idx]
-  p_approach_dat$date <- periods$date[p_approach_dat$night_idx]
-  p <- ggplot(p_approach_dat, aes(x=leader_id, y=prob_approach)) + 
-    geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2))
-  
-  #probability of being followed (mean across all conspecifics) each night
-  lead_by_night <- data.frame(ind_idx = rep(1:n_inds, n_nights),
-                              night_idx = rep(1:n_nights, each = n_inds))
-  lead_by_night$lead_prob <- lead_by_night_mat[cbind(lead_by_night$ind_idx, lead_by_night$night_idx)]
-  lead_by_night$follow_prob <- follow_by_night_mat[cbind(lead_by_night$ind_idx, lead_by_night$night_idx)]
-  lead_by_night$code <- ids$code[lead_by_night$ind_idx]
-  
-  plotpath <- paste0(dir, 'plots/dyadic/lead_by_night_10-500m.png')
-  p <- ggplot(lead_by_night, aes(x=code, y=lead_prob, fill = code)) + 
-    geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2)) + theme_minimal() + 
-    scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
-  ggsave(plot = p, filename = plotpath)
-  
-  plotpath <- paste0(dir, 'plots/dyadic/follow_by_night_10-500m.png')
-  p2 <- ggplot(lead_by_night, aes(x=code, y=follow_prob, fill = code)) + 
-    geom_violin() + geom_jitter(shape=16, position=position_jitter(0.2)) + theme_minimal() + 
-    scale_fill_viridis(discrete=T) + xlab('Individual') + ylab('Mean probability of being approached')
-  ggsave(plot = p2, filename = plotpath)
-  
-  #-----Analysis 4: plots for interactions analysis (accounting for past behavior of "other")----
-  
-  #Separate out probability of approach when in different situations:
-  #1. "Other" is moving away from the ego - 'follow'
-  #2. "Other" is moving toward from the ego - 'converge'
-  #3. "Other" is stationary - 'join'
-  #Two versions - either we include the ego being stationary as a non-response (_all), or we exclude stationary cases and therefore condition on the ego moving (_moving)
-  
-  #Aggregate patterns across dyads
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_all.png'), other_behav = NULL, include_moving_only = F, stratify_by = 'ego')
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/toward_moving.png'), other_behav = NULL, include_moving_only = T)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all.png'), other_behav = 'away', include_moving_only = F)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving.png'), other_behav = 'away', include_moving_only = T)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/converge_all.png'), other_behav = 'toward', include_moving_only = F)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/converge_moving.png'), other_behav = 'toward', include_moving_only = T)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_all.png'), other_behav = 'stationary', include_moving_only = F)
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/join_moving.png'), other_behav = 'stationary', include_moving_only = T)
-
-  #Comparing patterns across different dyads
-  
-  #Following
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving_by_ego.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'ego')
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_moving_by_other.png'), other_behav = 'away', include_moving_only = T, stratify_by = 'other')
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all_by_ego.png'), other_behav = 'away', include_moving_only = F, stratify_by = 'ego')
-  make_approach_vs_dist_plot(approach_data, dist_bins, plotpath = paste0(dir, 'plots/interaction_types/follow_all_by_other.png'), other_behav = 'away', include_moving_only = F, stratify_by = 'other')
-  
-  #Could add in analyses of converging and joining as well, but will skip it for now
-  
-  #"Following" heat map for the most relevant distance bin (5 - 200 m)
-  p_approach_middle <- n_middle <- matrix(NA, nrow = n_inds, ncol = n_inds)
-  dat_curr <- approach_data[which(approach_data$past_behav_j=='away'),]
-  for(i in 1:n_inds){
-    for(j in 1:n_inds){
-      idxs <- which(dat_curr$dyad_dist >= 5 & dat_curr$dyad_dist < 200 & dat_curr$i_ego == i & dat_curr$j_other == j)
-      p_approach_middle[i,j] <- mean(dat_curr$i_approaches_j_given_moving[idxs], na.rm=T)
-      n_middle[i,j] <- sum(!is.na(dat_curr$i_approaches_j_given_moving[idxs]))
-    }
-  }
-  
-  mean_lead <- colMeans(p_approach_middle, na.rm=T)
-  ord <- order(mean_lead, decreasing = F)
-  
-  plotpath <- paste0(dir, 'plots/interaction_types/follow_moving_heatmap_5-200m.png')
-  png(filename = plotpath, width = 8, height = 6, units = 'in', res = 300)
-  image.plot(p_approach_middle[ord,ord], xaxt='n', yaxt='n' ,zlim=c(min(p_approach_middle,na.rm=T),1),col=viridis(256),xlab='Follower',ylab='Leader', main = 'P(follow) when 5-200 m apart')
-  axis(1, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las = 2)
-  axis(2, at = seq(0,1,length.out=n_inds), labels = ids$code[ord], las=2)
-  y <- c(matrix(rep(seq(0,1,length.out=n_inds), each = n_inds), nrow = n_inds, ncol = n_inds))
-  x <- c(matrix(rep(seq(0,1,length.out=n_inds), n_inds), nrow = n_inds, ncol = n_inds))
-  text(x,y,paste0(round(c(p_approach_middle[ord,ord])*100),'%'))
-  dev.off()
-  
-  #Could add heatmaps for other behaviors, but skipping for now
+  plotpath <- paste0(dir, 'plots/leader_follower/follow_moving_heatmap_5-300m.png')
+  make_combined_heatmap_lines_plot(approach_data = approach_data, plotpath = plotpath, other_behav = 'away',include_moving_only = T, min_points_to_plot = 100, 
+                                   min_dist_bin = 5, max_dist_bin = 300, n_bins = 100, pct_win = 40)
   
 }
 
 
+make_combined_heatmap_lines_plot <- function(approach_data, plotpath, other_behav = NULL, include_moving_only = F, min_points_to_plot = 100,
+                                       min_dist_bin = 5, max_dist_bin = 300, n_bins = 50, pct_win = 40){
+  
+  #if indexes to subset by aren't specified, use all rows of data
+  if(is.null(other_behav)){
+    idxs_to_use <- 1:nrow(approach_data)
+  } else{
+    idxs_to_use <- which(approach_data$past_behav_j == other_behav)
+  }
+  
+  #subset to only data we need to use
+  dat <- approach_data[idxs_to_use,]
+  
+  n_inds <- max(approach_data$i_ego)
+  approach_probs <- ns <- array(NA, dim = c(n_inds, n_inds, n_bins))
+  mean_probs <- matrix(NA, nrow = n_inds, ncol = n_inds)
+  for(i in 1:n_inds){
+    for(j in 1:n_inds){
+      if(i!=j){
+        idxs <- which(dat$i_ego==i & dat$j_other==j)
+        #get means by distance bin
+        if(include_moving_only){
+          toward <- get_distrib_statistics(vals = dat$i_approaches_j_given_moving[idxs], x = dat$dyad_dist[idxs], 
+                                           min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+        } else{
+          toward <- get_distrib_statistics(vals = dat$i_approaches_j[idxs], x = dat$dyad_dist[idxs], 
+                                           min_dist = min_dist_bin, max_dist = max_dist_bin, n_bins = n_bins, pct_win = pct_win)
+        }
+        approach_probs[i,j,] <- toward$mean
+        ns[i,j,] <- toward$n
+        mean_probs[i,j] <- mean(dat$i_approaches_j_given_moving[idxs], na.rm=T)
+      }
+    }
+  }
+  approach_probs[which(ns < min_points_to_plot)] <- NA
+  bins <- toward$bins
+  ylims <- c(0.5, 1)
+  xlims <- c(min(bins),max(bins))
+  col_frac_matrix <- (mean_probs - min(mean_probs,na.rm=T)) / (max(mean_probs,na.rm=T) - min(mean_probs,na.rm=T))
+  cols <- viridis(1001)
+  
+  ord <- order(rowMeans(mean_probs, na.rm=T), decreasing = F)
+  
+  #get center of plot
+  x_center <- exp(mean(log(xlims)))
+  y_center <- mean(ylims)
+  
+  #make the plot
+  png(filename = plotpath, width = 8, height = 8, units = 'in', res = 300)
+  par(mfcol = c(n_inds,n_inds), mar = c(0,0,0,0))
+  for(i in ord){
+    for(j in ord){
+      
+      #get color
+      col_ij <- cols[round(col_frac_matrix[i,j]*1000)+1]
+      col_ij <- paste0(substr(col_ij, 1, 7), 'CC')
+    
+      plot(NULL, xlim = c(min(bins), max(bins)), ylim = ylims, yaxt = 'n',xaxt='n',ylab='',xlab='',log='x', type = 'l', bty = 'n')
+      print(xlims)
+      print(ylims)
+      if(i!=j){
+        polygon(x = c(xlims[1],xlims[2],xlims[2],xlims[1]),y = c(ylims[1],ylims[1],ylims[2],ylims[2]), col = col_ij, border=NA)
+        lines(bins, approach_probs[i,j,], lwd = 3)
+        pct_text <- paste0(round(mean_probs[i,j]*100),'%')
+        text(x_center, y_center, pct_text, cex = 1.5)
+        text(xlims[1],ylims[1], min(bins))
+        text(xlims[2],ylims[1], max(bins))
+        text(xlims[1],ylims[2], labels = ylims[2])
+        text(xlims[1], ylims[1], labels = ylims[1])
+        lines(c(xlims[1], xlims[1]), c(ylims[1], ylims[2]))
+        lines()
+      } else{
+        polygon(x = c(xlims[1],xlims[2],xlims[2],xlims[1]),y = c(ylims[1],ylims[1],ylims[2],ylims[2]), col = 'gray', border=NA)
+        text(x_center, y_center, ids$code[i], cex = 2)
+        
+      }
+    }
+  }
+  dev.off()
+}
 
-#TODO:
-#look into autocorrelation, consider downsampling 
-#model with autocorrelation model to get error bars 
-#nearest neighbor
-#different time scales - 5 sec, 10 sec, 30, sec, 1 min ,5, 10
+
 
